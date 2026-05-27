@@ -976,16 +976,6 @@ async def handle_poll_answer(poll_answer):
     
     data["current_answer_recorded"] = True
     
-    try:
-        status_msg = await bot.send_message(
-            user_id,
-            f"{'✅' if is_correct else '❌'} <b>Javobingiz qabul qilindi!</b>\n\n"
-            f"<i>Davom etish uchun 'O'tkazib yuborish' tugmasini bosing</i> 👇",
-            parse_mode="HTML"
-        )
-        await add_message(user_id, status_msg.message_id)
-    except:
-        pass
 
 @dp.callback_query(F.data == "skip_question")
 async def skip_question(callback: CallbackQuery, state: FSMContext):
