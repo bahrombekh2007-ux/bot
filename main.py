@@ -29,10 +29,7 @@ except ImportError:
 if load_dotenv:
     load_dotenv()
 
-TOKEN = os.getenv("BOT_TOKEN")
-if not TOKEN:
-    raise RuntimeError("BOT_TOKEN muhit o'zgaruvchisi belgilanmagan. Iltimos .env faylini tekshiring.")
-
+TOKEN = "8964353995:AAFgRTesY5nYBku_fyuFMNLQ2VW_hPMzOrg"
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
