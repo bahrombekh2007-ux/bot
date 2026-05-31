@@ -20,7 +20,7 @@ from aiogram.types import (
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from docx import Document
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 try:
     from dotenv import load_dotenv
@@ -33,6 +33,13 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 os.makedirs("temp", exist_ok=True)
+
+# O'zbekiston vaqti (UTC+5)
+UZBEKISTAN_TZ = timezone(timedelta(hours=5))
+
+def get_uzbekistan_time():
+    """O'zbekiston vaqtini qaytaradi"""
+    return datetime.now(UZBEKISTAN_TZ)
 
 # ─────────────────────────── YORDAMCHI FUNKSIYALAR ───────────────────────────
 
@@ -189,7 +196,7 @@ def parse_docx(file_path):
 
 def _read_txt(file_path):
     """TXT faylni turli kodlashlarda o'qiydi."""
-    for enc in ("utf-8-sig", "utf-8", "cp1251", "windows-1251", "latin-1"):
+    for enc in ("utf-8-sig", "utf-8", "cp1251", "windows-1251", "latin-1", "cp1252", "iso-8859-1"):
         try:
             with open(file_path, "r", encoding=enc) as f:
                 return f.read()
@@ -231,10 +238,11 @@ def _parse_plus_minus(lines):
         if not line:
             continue
 
-        if line.startswith("?"):
+        if line.startswith("?") or (line.startswith("#") and "?" in line):
             flush()
-            # "? 1. Savol matni ?" → "1. Savol matni?"
-            q = line[1:].strip()
+            if line.startswith("#"):
+                line = line[1:].strip()
+            q = line[1:].strip() if line.startswith("?") else line.strip()
             if q.endswith(" ?"):
                 q = q[:-2].strip()
             elif q.endswith("?") and len(q) > 1 and q[-2] == " ":
@@ -243,14 +251,18 @@ def _parse_plus_minus(lines):
             correct = None
             opts = []
 
-        elif line.startswith("+ ") or line == "+":
-            ans = line[1:].strip()
+        elif line.startswith("+ ") or line == "+" or (line.startswith("+") and not line[1:].strip().startswith("-")):
+            ans = line[1:].strip() if line.startswith("+") else line
+            if ans.startswith("+"):
+                ans = ans[1:].strip()
             correct = ans
-            if ans not in opts:
+            if ans and ans not in opts:
                 opts.append(ans)
 
-        elif line.startswith("- ") or line == "-":
-            ans = line[1:].strip()
+        elif line.startswith("- ") or line == "-" or line.startswith("-"):
+            ans = line[1:].strip() if line.startswith("-") else line
+            if ans.startswith("-"):
+                ans = ans[1:].strip()
             if ans and ans not in opts:
                 opts.append(ans)
 
@@ -310,7 +322,7 @@ def _parse_numbered(lines):
             continue
 
         m = re.match(
-            r"^(?:Javob|To'g'ri\s+javob|Answer|Ans)[:\s]+([A-Da-d])",
+            r"^(?:Javob|To'g'ri\s+javob|Answer|Ans|Togri javob|Javobi)[:\s]*([A-Da-d])",
             line, re.IGNORECASE
         )
         if m:
@@ -339,6 +351,109 @@ def _parse_pipe(lines):
     return questions
 
 
+def _parse_question_answer(lines):
+    """
+    Savol-javob formatini parse qiladi:
+    
+        Savol: Savol matni?
+        Javob: To'g'ri javob
+    """
+    questions = []
+    current_q = None
+    current_ans = None
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            if current_q and current_ans:
+                questions.append({
+                    "question": current_q,
+                    "options": [current_ans, "Variant 2", "Variant 3", "Variant 4"],
+                    "answer": current_ans,
+                })
+                current_q = None
+                current_ans = None
+            continue
+        
+        lower_line = line.lower()
+        if "savol:" in lower_line or "question:" in lower_line:
+            if current_q and current_ans:
+                questions.append({
+                    "question": current_q,
+                    "options": [current_ans, "Variant 2", "Variant 3", "Variant 4"],
+                    "answer": current_ans,
+                })
+            q_part = re.split(r"savol:|question:", line, flags=re.IGNORECASE)[-1].strip()
+            current_q = q_part
+            current_ans = None
+        elif "javob:" in lower_line or "answer:" in lower_line:
+            ans_part = re.split(r"javob:|answer:", line, flags=re.IGNORECASE)[-1].strip()
+            current_ans = ans_part
+    
+    if current_q and current_ans:
+        questions.append({
+            "question": current_q,
+            "options": [current_ans, "Variant 2", "Variant 3", "Variant 4"],
+            "answer": current_ans,
+        })
+    
+    return questions
+
+
+def _parse_quiz_format(lines):
+    """
+    Quiz formatini parse qiladi:
+    
+        1. Savol matni
+        a) To'g'ri javob
+        b) Noto'g'ri
+        c) Noto'g'ri
+        d) Noto'g'ri
+    """
+    questions = []
+    current_q = None
+    opts = []
+    opt_letters = ['a', 'b', 'c', 'd']
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            if current_q and len(opts) == 4:
+                questions.append({
+                    "question": current_q,
+                    "options": opts,
+                    "answer": opts[0] if opts else "",
+                })
+                current_q = None
+                opts = []
+            continue
+        
+        m = re.match(r"^(\d+)[.)]\s+(.+)$", line)
+        if m:
+            if current_q and len(opts) == 4:
+                questions.append({
+                    "question": current_q,
+                    "options": opts,
+                    "answer": opts[0] if opts else "",
+                })
+            current_q = m.group(2).strip()
+            opts = []
+            continue
+        
+        m = re.match(r"^([a-d])[.)]\s+(.+)$", line.lower())
+        if m and current_q:
+            opts.append(m.group(2).strip())
+    
+    if current_q and len(opts) == 4:
+        questions.append({
+            "question": current_q,
+            "options": opts,
+            "answer": opts[0] if opts else "",
+        })
+    
+    return questions
+
+
 def parse_txt(file_path):
     """
     TXT faylni avtomatik format aniqlab parse qiladi.
@@ -362,6 +477,10 @@ def parse_txt(file_path):
     ├─────────────────────────────────────────────────────┤
     │  FORMAT 3  (pipe | ajratuvchi)                      │
     │  Savol|Javob A|Javob B|Javob C|Javob D              │
+    ├─────────────────────────────────────────────────────┤
+    │  FORMAT 4  (Savol-Javob format)                     │
+    │  Savol: Savol matni?                                │
+    │  Javob: To'g'ri javob                               │
     └─────────────────────────────────────────────────────┘
     """
     content = _read_txt(file_path)
@@ -380,7 +499,10 @@ def parse_txt(file_path):
     has_pipe = any("|" in l for l in non_empty)
     has_numbered = any(re.match(r"^\d+[.)]\s+", l) for l in non_empty)
     has_abcd = any(re.match(r"^[A-Da-d][.)]\s+", l) for l in non_empty)
+    has_qa = any("savol:" in l.lower() or "question:" in l.lower() for l in non_empty)
+    has_quiz = any(re.match(r"^\d+[.)]\s+", l) for l in non_empty) and any(re.match(r"^[a-d][.)]\s+", l.lower()) for l in non_empty)
 
+    # Formatlarni sinab ko'rish
     if has_question_marker or has_plus:
         result = _parse_plus_minus(lines)
         if result:
@@ -396,6 +518,29 @@ def parse_txt(file_path):
         if result:
             return result
 
+    if has_qa:
+        result = _parse_question_answer(non_empty)
+        if result:
+            return result
+
+    if has_quiz:
+        result = _parse_quiz_format(non_empty)
+        if result:
+            return result
+
+    # Agar hech qanday format mos kelmasa, har bir qatorni alohida savol deb hisobla
+    simple_questions = []
+    for line in non_empty:
+        if len(line) > 10:  # O'qishli matn
+            simple_questions.append({
+                "question": line,
+                "options": ["To'g'ri", "Noto'g'ri 1", "Noto'g'ri 2", "Noto'g'ri 3"],
+                "answer": "To'g'ri",
+            })
+    
+    if simple_questions:
+        return simple_questions
+
     return []
 
 
@@ -404,6 +549,7 @@ def parse_txt(file_path):
 class TestStates(StatesGroup):
     setting_count = State()
     testing = State()
+    waiting_file = State()
 
 
 users: dict = {}
@@ -448,14 +594,15 @@ async def add_message(user_id, message_id):
 
 def main_menu_keyboard(user_id=None):
     row1 = [KeyboardButton(text="📊 Test natijam"), KeyboardButton(text="🆘 Yordam")]
-    row2 = [KeyboardButton(text="📄 Yangi test")]
+    row2 = [KeyboardButton(text="📄 Yangi test"), KeyboardButton(text="📁 Mening fayllarim")]
+    row3 = [KeyboardButton(text="⭐ Statistika"), KeyboardButton(text="⚙️ Sozlamalar")]
     if user_id and users.get(user_id, {}).get("uploaded_docs"):
         row2.append(KeyboardButton(text="🔁 Qayta boshlash"))
-    return ReplyKeyboardMarkup(keyboard=[row1, row2], resize_keyboard=True)
+    return ReplyKeyboardMarkup(keyboard=[row1, row2, row3], resize_keyboard=True)
 
 
 def get_count_keyboard(total):
-    opts = [n for n in (5, 10, 15, 20, 25, 30, 35) if total >= n]
+    opts = [n for n in (5, 10, 15, 20, 25, 30, 35, 40, 45, 50) if total >= n]
     if total not in opts:
         opts.append(total)
     buttons, row = [], []
@@ -466,6 +613,7 @@ def get_count_keyboard(total):
             buttons.append(row)
             row = []
     buttons.append([InlineKeyboardButton(text="✍️ O'zim kiritaman", callback_data="custom_count")])
+    buttons.append([InlineKeyboardButton(text="🎲 Tasodifiy", callback_data="random_count")])
     buttons.append([InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_test")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -474,6 +622,7 @@ def poll_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⏭ O'tkazib yuborish ➡️", callback_data="skip_question")],
         [InlineKeyboardButton(text="🔴 Testni yakunlash", callback_data="stop_test")],
+        [InlineKeyboardButton(text="📋 Javobni ko'rsat", callback_data="show_answer")],
     ])
 
 
@@ -483,14 +632,29 @@ def poll_keyboard():
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     await clean_chat(message.from_user.id, message.chat.id)
+    
+    # Yangi foydalanuvchi uchun statistika yaratish
+    if message.from_user.id not in users:
+        users[message.from_user.id] = {
+            "first_visit": get_uzbekistan_time().strftime("%d.%m.%Y %H:%M"),
+            "total_tests": 0,
+            "total_questions": 0,
+            "total_correct": 0,
+            "results": [],
+            "uploaded_docs": [],
+        }
+    
     msg = await message.answer(
         "🎯 <b>TEST MASTER BOT</b>\n"
         "━━━━━━━━━━━━━━━━━━━\n\n"
-        "🤖 <i>Oraliq va sesiya uchun yordam!</i>\n\n"
+        f"👋 Assalomu alaykum, {message.from_user.first_name}!\n\n"
+        "🤖 <i>Professional test platformasi</i>\n\n"
         "✨ <b>Imkoniyatlar:</b>\n"
         "• 🎲 Savollar va variantlar aralash\n"
         "• 📝 Test sonini o'zingiz belgilaysiz\n"
         "• ⏱ Vaqt chegarasisiz\n"
+        "• 📊 Batafsil statistika\n"
+        "• 📁 Fayllar tarixi\n"
         "• 🧑‍💻 @Rustamov_v1\n\n"
         "📎 <b>Qabul qilinadigan fayl turlari:</b>\n"
         "• <code>.docx</code> — Word jadval\n"
@@ -526,11 +690,110 @@ async def new_test(message: Message, state: FSMContext):
         "B) Noto'g'ri 1\n"
         "C) Noto'g'ri 2\n"
         "D) Noto'g'ri 3\n"
-        "Javob: A</code>",
+        "Javob: A</code>\n\n"
+        "📝 <b>TXT format 3</b> (Savol-Javob):\n"
+        "<code>Savol: Savol matni?\n"
+        "Javob: To'g'ri javob</code>",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(message.from_user.id),
     )
     await add_message(message.from_user.id, msg.message_id)
+
+
+@dp.message(F.text == "📁 Mening fayllarim")
+async def my_files(message: Message):
+    user_id = message.from_user.id
+    docs = users.get(user_id, {}).get("uploaded_docs", [])
+    
+    if not docs:
+        msg = await message.answer(
+            "📁 <b>Mening fayllarim</b>\n"
+            "━━━━━━━━━━━━━━━━━━━\n\n"
+            "❌ Hali hech qanday fayl yuklanmagan.\n\n"
+            "📎 Yangi test uchun fayl yuboring!",
+            parse_mode="HTML",
+            reply_markup=main_menu_keyboard(user_id),
+        )
+        await add_message(user_id, msg.message_id)
+        return
+    
+    text = "📁 <b>Mening fayllarim</b>\n━━━━━━━━━━━━━━━━━━━\n\n"
+    for i, doc in enumerate(docs[-10:], 1):
+        text += f"<b>{i}.</b> {doc['file_name']}\n"
+        text += f"   📚 {len(doc['questions'])} ta savol\n"
+        text += f"   📅 {doc['uploaded_at']}\n\n"
+    
+    buttons = []
+    for i, doc in enumerate(docs[-5:]):
+        buttons.append([InlineKeyboardButton(
+            text=f"📄 {doc['file_name'][:30]}",
+            callback_data=f"select_file_{len(docs)-5+i if len(docs)>5 else i}"
+        )])
+    
+    msg = await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons + [[InlineKeyboardButton(text="🏠 Menyu", callback_data="main_menu")]])
+    )
+    await add_message(user_id, msg.message_id)
+
+
+@dp.message(F.text == "⭐ Statistika")
+async def my_stats(message: Message):
+    user_id = message.from_user.id
+    user_data = users.get(user_id, {})
+    
+    total_tests = user_data.get("total_tests", 0)
+    total_questions = user_data.get("total_questions", 0)
+    total_correct = user_data.get("total_correct", 0)
+    results = user_data.get("results", [])
+    
+    avg_percentage = 0
+    if results:
+        avg_percentage = sum(r["percentage"] for r in results) / len(results)
+    
+    best_result = None
+    if results:
+        best_result = max(results, key=lambda x: x["percentage"])
+    
+    text = (
+        "⭐ <b>UMUMIY STATISTIKA</b>\n"
+        "━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📅 Birinchi foydalanish: <b>{user_data.get('first_visit', 'Noma\'lum')}</b>\n\n"
+        f"📊 Jami testlar: <b>{total_tests} ta</b>\n"
+        f"📝 Jami savollar: <b>{total_questions} ta</b>\n"
+        f"✅ To'g'ri javoblar: <b>{total_correct} ta</b>\n"
+        f"📈 O'rtacha natija: <b>{avg_percentage:.1f}%</b>\n\n"
+    )
+    
+    if best_result:
+        text += (
+            "🏆 <b>ENG YAXSHI NATIJA</b>\n"
+            f"📅 Sana: {best_result['date']}\n"
+            f"📊 {best_result['percentage']:.1f}% | {best_result['grade']}\n"
+        )
+    
+    msg = await message.answer(text, parse_mode="HTML", reply_markup=main_menu_keyboard(user_id))
+    await add_message(user_id, msg.message_id)
+
+
+@dp.message(F.text == "⚙️ Sozlamalar")
+async def settings(message: Message):
+    user_id = message.from_user.id
+    
+    msg = await message.answer(
+        "⚙️ <b>SOZLAMALAR</b>\n"
+        "━━━━━━━━━━━━━━━━━━━\n\n"
+        "🔄 <b>Test sozlamalari:</b>\n"
+        "• Savollar aralashtirish: ✅ Yoqilgan\n"
+        "• Variantlar aralashtirish: ✅ Yoqilgan\n\n"
+        "🔔 <b>Xabarnomalar:</b>\n"
+        "• Test yakunlanganda: ✅ Yoqilgan\n\n"
+        "<i>Tez orada qo'shimcha sozlamalar qo'shiladi...</i>",
+        parse_mode="HTML",
+        reply_markup=main_menu_keyboard(user_id)
+    )
+    await add_message(user_id, msg.message_id)
 
 
 @dp.message(F.text == "🆘 Yordam")
@@ -553,9 +816,11 @@ async def cmd_help(message: Message):
         "<code>? Savol ?\n+ To'g'ri\n- Noto'g'ri 1\n- Noto'g'ri 2\n- Noto'g'ri 3</code>\n\n"
         "📝 <b>TXT format 2</b> (A/B/C/D):\n"
         "<code>1. Savol\nA) To'g'ri\nB) Noto'g'ri 1\nC) Noto'g'ri 2\nD) Noto'g'ri 3\nJavob: A</code>\n\n"
+        "📝 <b>TXT format 3</b> (Savol-Javob):\n"
+        "<code>Savol: Savol matni?\nJavob: To'g'ri javob</code>\n\n"
         "─────────────────────\n"
         "⚠️ Har javobdan keyin ⏭ tugmasini bosing!\n\n"
-        "💡 Taklif: 🧑‍💻@Rustamov_v1",
+        "💡 Taklif: 🧑‍💻 @Rustamov_v1",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(message.from_user.id),
     )
@@ -580,8 +845,8 @@ async def test_result(message: Message):
         await add_message(user_id, msg.message_id)
         return
 
-    text = "📊 <b>TEST NATIJALARI (so'nggi 5)</b>\n━━━━━━━━━━━━━━━━━━━\n\n"
-    for i, r in enumerate(results[-5:], 1):
+    text = "📊 <b>TEST NATIJALARI (so'nggi 10)</b>\n━━━━━━━━━━━━━━━━━━━\n\n"
+    for i, r in enumerate(results[-10:], 1):
         text += (
             f"<b>{i}.</b> {r['date']}\n"
             f"   📝 {r['total']} ta | ✅ {r['score']} ta\n"
@@ -610,7 +875,7 @@ async def restart_list(message: Message):
             text=f"{i+1}. {d['file_name']} ({len(d['questions'])} ta)",
             callback_data=f"restart_doc_{i}",
         )]
-        for i, d in enumerate(docs)
+        for i, d in enumerate(docs[-5:])
     ]
     buttons.append([InlineKeyboardButton(text="❌ Bekor", callback_data="cancel_test")])
     await clean_chat(user_id, message.chat.id)
@@ -654,6 +919,35 @@ async def restart_doc(callback: CallbackQuery, state: FSMContext):
         msg = await callback.message.answer(txt, parse_mode="HTML",
                                             reply_markup=get_count_keyboard(total))
         await add_message(user_id, msg.message_id)
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("select_file_"))
+async def select_file(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    docs = users.get(user_id, {}).get("uploaded_docs", [])
+    try:
+        idx = int(callback.data.split("_")[-1])
+        doc = docs[idx]
+    except (ValueError, IndexError):
+        await callback.answer("❌ Xatolik!", show_alert=True)
+        return
+    
+    users[user_id].update({
+        "questions": doc["questions"],
+        "total_questions": len(doc["questions"]),
+        "file_name": doc["file_name"],
+    })
+    total = len(doc["questions"])
+    await state.set_state(TestStates.setting_count)
+    txt = (
+        f"📝 <b>TEST SONINI TANLANG</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📚 Mavjud savollar: <b>{total} ta</b>\n\n"
+        f"<i>Variantni tanlang</i> 👇"
+    )
+    await callback.message.edit_text(txt, parse_mode="HTML",
+                                     reply_markup=get_count_keyboard(total))
     await callback.answer()
 
 
@@ -717,7 +1011,7 @@ async def handle_document(message: Message, state: FSMContext):
                 "- Noto'g'ri 1\n"
                 "- Noto'g'ri 2\n"
                 "- Noto'g'ri 3</code>\n\n"
-                "<i>Yoki A/B/C/D format ham qabul qilinadi.</i>"
+                "<i>Yoki A/B/C/D yoki Savol-Javob format ham qabul qilinadi.</i>"
             )
         else:
             questions = parse_docx(parse_path)
@@ -747,7 +1041,7 @@ async def handle_document(message: Message, state: FSMContext):
             "file_name": doc.file_name,
             "file_path": parse_path,
             "questions": questions,
-            "uploaded_at": datetime.now().strftime("%d.%m.%Y %H:%M"),
+            "uploaded_at": get_uzbekistan_time().strftime("%d.%m.%Y %H:%M"),
         })
         existing.update({
             "questions": questions,
@@ -837,6 +1131,19 @@ async def select_count(callback: CallbackQuery, state: FSMContext):
     await callback.answer(f"✅ {count} ta test boshlandi!")
 
 
+@dp.callback_query(F.data == "random_count")
+async def random_count(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    if user_id not in users:
+        await callback.answer("❌ Xatolik!", show_alert=True)
+        return
+    total = users[user_id]["total_questions"]
+    count = random.randint(5, min(50, total))
+    await safe_delete_message(callback.message.chat.id, callback.message.message_id)
+    await start_test(callback.message, user_id, count, state)
+    await callback.answer(f"🎲 {count} ta test boshlandi!")
+
+
 @dp.callback_query(F.data == "custom_count")
 async def custom_count_prompt(callback: CallbackQuery):
     try:
@@ -903,6 +1210,7 @@ async def start_test(message, user_id, count, state: FSMContext):
         "waiting_for_skip": False,
         "current_answer_recorded": False,
         "current_poll_message_id": None,
+        "test_start_time": get_uzbekistan_time(),
     })
     await state.set_state(TestStates.testing)
 
@@ -1000,6 +1308,23 @@ async def on_poll_answer(poll_answer):
     data["current_answer_recorded"] = True
 
 
+@dp.callback_query(F.data == "show_answer")
+async def show_answer(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    data = users.get(user_id)
+    if not data or "selected_questions" not in data:
+        await callback.answer("❌ Test topilmadi!", show_alert=True)
+        return
+    
+    cidx = data.get("current_question_index", 0)
+    if cidx >= len(data["selected_questions"]):
+        await callback.answer("❌ Savol topilmadi!", show_alert=True)
+        return
+    
+    qd = data["selected_questions"][cidx]
+    await callback.answer(f"✅ To'g'ri javob: {qd['answer']}", show_alert=True)
+
+
 @dp.callback_query(F.data == "skip_question")
 async def skip_question(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
@@ -1080,6 +1405,16 @@ async def show_results(chat_id, user_id, stopped=False):
         grade, emoji = "👍 Qoniqarli", "💪"
     else:
         grade, emoji = "📚 O'qish kerak", "📖"
+    
+    # Vaqtni hisoblash
+    start_time = data.get("test_start_time")
+    time_taken = ""
+    if start_time:
+        end_time = get_uzbekistan_time()
+        diff = end_time - start_time
+        minutes = diff.seconds // 60
+        seconds = diff.seconds % 60
+        time_taken = f"\n⏱ Vaqt: {minutes} min {seconds} sek"
 
     text = (
         f"{emoji} <b>TEST NATIJASI</b>\n"
@@ -1087,7 +1422,7 @@ async def show_results(chat_id, user_id, stopped=False):
         f"📊 <b>Statistika:</b>\n"
         f"• Jami savollar: <b>{total} ta</b>\n"
         f"• Javob berilgan: <b>{answered} ta</b>\n"
-        f"• O'tkazib yuborilgan: <b>{max(total - answered, 0)} ta</b>\n\n"
+        f"• O'tkazib yuborilgan: <b>{max(total - answered, 0)} ta</b>{time_taken}\n\n"
         f"✅ To'g'ri: <b>{score} ta</b>\n"
         f"❌ Noto'g'ri: <b>{max(total - score, 0)} ta</b>\n"
         f"📈 Foiz: <b>{percentage:.1f}%</b>\n"
@@ -1095,8 +1430,20 @@ async def show_results(chat_id, user_id, stopped=False):
         f"<i>{'⚠️ Test vaqtidan oldin yakunlandi' if stopped else '🎊 Test muvaffaqiyatli yakunlandi!'}</i>"
     )
 
+    # Umumiy statistikani yangilash
+    if "total_tests" not in data:
+        data["total_tests"] = 0
+    if "total_questions" not in data:
+        data["total_questions"] = 0
+    if "total_correct" not in data:
+        data["total_correct"] = 0
+    
+    data["total_tests"] += 1
+    data["total_questions"] += total
+    data["total_correct"] += score
+    
     data.setdefault("results", []).append({
-        "date": datetime.now().strftime("%d.%m.%Y %H:%M"),
+        "date": get_uzbekistan_time().strftime("%d.%m.%Y %H:%M"),
         "total": total, "score": score,
         "percentage": percentage, "grade": grade,
     })
@@ -1139,6 +1486,7 @@ async def retry_poll(callback: CallbackQuery, state: FSMContext):
         "poll_ids": [],
         "waiting_for_skip": False,
         "current_answer_recorded": False,
+        "test_start_time": get_uzbekistan_time(),
     })
     await state.set_state(TestStates.testing)
     await clean_chat(user_id, callback.message.chat.id)
@@ -1252,6 +1600,7 @@ async def cancel_test(callback: CallbackQuery, state: FSMContext):
 
 async def main():
     print("🚀 Bot ishga tushdi...")
+    print(f"📍 Vaqt zonasi: UTC+5 (O'zbekiston)")
     cleanup_old_files()
     await dp.start_polling(bot)
 
