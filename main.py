@@ -315,6 +315,36 @@ def parse_docx(file_path):
 
     return questions
 
+def parse_txt(file_path):
+    """
+    TXT fayldan testlarni o'qiydi.
+    Format: har bir savol 5 qatordan iborat blok:
+        qator1: savol matni
+        qator2: variant A
+        qator3: variant B
+        qator4: variant C
+        qator5: variant D
+    To'g'ri javob sifatida birinchi variant (qator2) olinadi.
+    Bo'sh qatorlar e'tiborga olinmaydi.
+    """
+    with open(file_path, "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f if line.strip()]
+
+    questions = []
+    for i in range(0, len(lines), 5):
+        block = lines[i:i+5]
+        if len(block) == 5:
+            question_text = block[0]
+            options = block[1:5]
+            # To'g'ri javob birinchi variant (block[1])
+            if question_text and len(options) == 4:
+                questions.append({
+                    "question": question_text,
+                    "options": options,
+                    "answer": options[0]
+                })
+    return questions
+
 def main_menu_keyboard(user_id=None):
     """Asosiy menyu klaviaturasi"""
     buttons = [
@@ -393,7 +423,7 @@ async def start(message: Message, state: FSMContext):
         "• 📝 Test sonini o'zingiz belgilaysiz\n"
         "• ⏱ Vaqt chegarasisiz\n"
         "• 🧑‍💻@Rustamov_v1\n\n"
-        "📄 <b>Boshlash uchun DOCX fayl yuboring!</b>",
+        "📄 <b>Boshlash uchun DOCX, DOC yoki TXT fayl yuboring!</b>",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(message.from_user.id)
     )
@@ -407,9 +437,9 @@ async def new_test(message: Message, state: FSMContext):
     msg = await message.answer(
         "📄 <b>YANGI TEST</b>\n"
         "━━━━━━━━━━━━━━━━━━━\n\n"
-        "Test boshlash uchun DOCX formatdagi\n"
+        "Test boshlash uchun DOCX, DOC yoki TXT formatdagi\n"
         "faylingizni yuboring 📎\n\n"
-        "<i>Format: 5 ustunli jadval</i>",
+        "<i>Format: 5 ustunli jadval (DOCX) yoki 5 qatorli blok (TXT)</i>",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(message.from_user.id)
     )
@@ -504,18 +534,17 @@ async def help(message: Message):
         "🆘 <b>YORDAM</b>\n"
         "━━━━━━━━━━━━━━━━━━━\n\n"
         "📌 <b>Test yaratish tartibi:</b>\n"
-        "1️⃣ DOCX fayl yuboring\n"
+        "1️⃣ DOCX, DOC yoki TXT fayl yuboring\n"
         "2️⃣ Test sonini tanlang\n"
         "⚠️ <b>Muhim eslatma:</b>\n"
         "• Har bir javobdan keyin\n"
         "  'O'tkazib yuborish' tugmasini bosing\n"
         "• Vaqt chegarasi yo'q\n"
         "• Testni istalgan payt yakunlang\n\n"
-        "📊 <b>DOCX formati:</b>\n"
-        "• 5 ustunli jadval\n"
-        "• 1-ustun: Savol\n"
-        "• 2-5-ustun: Variantlar\n"
-        "• 2-ustun to'g'ri javob\n\n"
+        "📊 <b>Fayl formatlari:</b>\n"
+        "• DOCX/DOC: 5 ustunli jadval\n"
+        "• TXT: 5 qatorli blok (savol + 4 variant)\n"
+        "  (birinchi variant to'g'ri javob)\n\n"
         "💡 <b>Taklif bolsa:</b>\n"
         "🧑‍💻@Rustamov_v1",
         parse_mode="HTML",
@@ -560,7 +589,7 @@ async def test_result(message: Message):
         text += f"   📝 {result['total']} ta | ✅ {result['score']} ta\n"
         text += f"   📈 {result['percentage']:.1f}% | {result['grade']}\n\n"
     
-    text += "<i>Yangi test uchun DOCX yuboring</i> 📄"
+    text += "<i>Yangi test uchun DOCX/TXT yuboring</i> 📄"
     
     msg = await message.answer(
         text,
@@ -575,9 +604,10 @@ async def handle_doc(message: Message, state: FSMContext):
     doc = message.document
     file_name = doc.file_name.lower()
     
-    if not (file_name.endswith(".docx") or file_name.endswith(".doc")):
+    # Qo'llab-quvvatlanadigan kengaytmalar
+    if not (file_name.endswith(".docx") or file_name.endswith(".doc") or file_name.endswith(".txt")):
         msg = await message.answer(
-            "❌ <b>Faqat .docx yoki .doc fayl yuboring!</b>",
+            "❌ <b>Faqat .docx, .doc yoki .txt fayl yuboring!</b>",
             parse_mode="HTML",
             reply_markup=main_menu_keyboard(message.from_user.id)
         )
@@ -597,10 +627,8 @@ async def handle_doc(message: Message, state: FSMContext):
         file = await bot.get_file(doc.file_id)
         downloaded = await bot.download_file(file.file_path)
         
-        ext = ".docx"
-        if file_name.endswith(".doc"):
-            ext = ".doc"
-
+        # Kengaytmani saqlab qolish
+        ext = os.path.splitext(file_name)[1]  # .docx, .doc yoki .txt
         save_path = os.path.join(
             "temp",
             f"test_{message.from_user.id}_{int(time.time())}{ext}"
@@ -618,19 +646,23 @@ async def handle_doc(message: Message, state: FSMContext):
             await add_message(message.from_user.id, msg.message_id)
             return
 
-        parse_path = save_path
-        if file_name.endswith(".doc"):
+        # Fayl turiga qarab parsing
+        if ext == ".txt":
+            questions = parse_txt(save_path)
+        elif ext == ".doc":
             converted_path = os.path.splitext(save_path)[0] + ".docx"
             parse_path = convert_doc_to_docx(save_path, converted_path)
-        
-        questions = parse_docx(parse_path)
+            questions = parse_docx(parse_path)
+        else:  # .docx
+            questions = parse_docx(save_path)
         
         if not questions:
             await clean_chat(message.from_user.id, message.chat.id)
             msg = await message.answer(
                 "❌ <b>Test topilmadi!</b>\n\n"
                 "Fayl formatini tekshiring:\n"
-                "• 5 ustunli jadval bo'lishi kerak",
+                "• DOCX/DOC: 5 ustunli jadval\n"
+                "• TXT: 5 qatorli blok (savol + 4 variant)",
                 parse_mode="HTML",
                 reply_markup=main_menu_keyboard(message.from_user.id)
             )
@@ -656,7 +688,7 @@ async def handle_doc(message: Message, state: FSMContext):
         uploaded_docs = users.get(message.from_user.id, {}).get("uploaded_docs", [])
         uploaded_docs.append({
             "file_name": doc.file_name,
-            "file_path": parse_path,
+            "file_path": save_path,
             "questions": questions,
             "uploaded_at": datetime.now().strftime("%d.%m.%Y %H:%M")
         })
@@ -666,7 +698,7 @@ async def handle_doc(message: Message, state: FSMContext):
             "questions": questions,
             "total_questions": len(questions),
             "file_name": doc.file_name,
-            "uploaded_file": parse_path,
+            "uploaded_file": save_path,
             "uploaded_docs": uploaded_docs
         })
         users[message.from_user.id] = existing_data
@@ -693,7 +725,7 @@ async def cancel_doc(callback: CallbackQuery, state: FSMContext):
     
     clear_user_test_session(callback.from_user.id)
     msg = await callback.message.answer(
-        "📄 Yangi test uchun DOCX yuboring",
+        "📄 Yangi test uchun DOCX/TXT yuboring",
         reply_markup=main_menu_keyboard(callback.from_user.id)
     )
     await add_message(callback.from_user.id, msg.message_id)
@@ -1260,7 +1292,7 @@ async def back_to_main_menu(callback: CallbackQuery, state: FSMContext):
         chat_id,
         "🏠 <b>BOSH MENYU</b>\n"
         "━━━━━━━━━━━━━━━━━━━\n\n"
-        "📄 Yangi test boshlash uchun DOCX fayl yuboring\n\n"
+        "📄 Yangi test boshlash uchun DOCX, DOC yoki TXT fayl yuboring\n\n"
         "<i>Menu tugmalaridan foydalaning</i> 👇",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(user_id)
@@ -1282,15 +1314,14 @@ async def cancel_test_config(callback: CallbackQuery, state: FSMContext):
     msg = await bot.send_message(
         chat_id,
         "❌ Test sozlash bekor qilindi\n\n"
-        "📄 Yangi test uchun DOCX yuboring",
+        "📄 Yangi test uchun DOCX/TXT yuboring",
         reply_markup=main_menu_keyboard(user_id)
     )
     await add_message(user_id, msg.message_id)
     await callback.answer()
 
 async def main():
-    print("🚀 ishga tushdi...")
-
+    print("🚀 Bot ishga tushdi (TXT qo'llab-quvvatlanadi)...")
     
     try:
         cleanup_old_files()
