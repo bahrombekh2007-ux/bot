@@ -452,7 +452,37 @@ class TestStates(StatesGroup):
 users: dict = {}
 user_messages: dict = {}
 
-SUPPORTED_EXT = (".docx", ".txt", ".xlsx", ".pdf")
+SUPPORTED_EXT = (".docx", ".doc", ".txt", ".xlsx", ".pdf")
+
+
+def convert_doc_to_docx(doc_path, docx_path):
+    """DOC faylni DOCX ga aylantiradi (LibreOffice orqali)."""
+    import shutil, subprocess
+    for soffice in ["soffice", "libreoffice",
+                    r"C:\Program Files\LibreOffice\program\soffice.exe",
+                    r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"]:
+        found = (shutil.which(soffice) or
+                 (os.path.isabs(soffice) and os.path.exists(soffice)))
+        if found:
+            out_dir = os.path.dirname(docx_path)
+            subprocess.run(
+                [soffice, "--headless", "--convert-to", "docx",
+                 "--outdir", out_dir, doc_path],
+                check=True, capture_output=True, timeout=60,
+            )
+            auto_out = os.path.join(
+                out_dir,
+                os.path.splitext(os.path.basename(doc_path))[0] + ".docx"
+            )
+            if os.path.exists(auto_out):
+                if auto_out != docx_path:
+                    os.rename(auto_out, docx_path)
+                return docx_path
+    raise RuntimeError(
+        "LibreOffice topilmadi! .doc faylni ochish uchun o'rnating:\n"
+        "Linux: sudo apt install libreoffice\n"
+        "Windows: https://www.libreoffice.org"
+    )
 
 
 def clear_user_test_session(user_id):
@@ -807,10 +837,11 @@ async def handle_document(message: Message, state: FSMContext):
         msg = await message.answer(
             "❌ <b>Qo'llab-quvvatlanmaydigan fayl!</b>\n\n"
             "✅ Qabul qilinadi:\n"
-            "• <code>.txt</code> — Matnli fayl\n"
+            "• <code>.txt</code>  — Matnli fayl\n"
             "• <code>.docx</code> — Word\n"
+            "• <code>.doc</code>  — Eski Word\n"
             "• <code>.xlsx</code> — Excel\n"
-            "• <code>.pdf</code> — PDF",
+            "• <code>.pdf</code>  — PDF",
             parse_mode="HTML", reply_markup=main_kb(uid),
         )
         await add_msg(uid, msg.message_id)
@@ -829,6 +860,12 @@ async def handle_document(message: Message, state: FSMContext):
         save_path = os.path.join("temp", f"u{uid}_{int(time.time())}{ext}")
         with open(save_path, "wb") as f:
             f.write(downloaded.read())
+
+        # .doc → .docx konversiya
+        if ext == ".doc":
+            converted = save_path.replace(".doc", "_conv.docx")
+            save_path = convert_doc_to_docx(save_path, converted)
+            ext = ".docx"
 
         # Parse qilish
         if ext == ".txt":
