@@ -582,11 +582,10 @@ async def cmd_start(message: Message, state: FSMContext):
         "• 📊 Batafsil statistika\n"
         "• 📁 Fayllar tarixi\n\n"
         "📎 Fayl yuboring\n\n"
-        ✅ Qabul qilinadi:
-        • .txt — Matnli fayl
-        • .docx — Word
-        • .xlsx — Excel
-        • .pdf — PDF
+        "• .txt — Matnli fayl"
+        "• .docx — Word"
+        "• .xlsx — Excel"
+        "• .pdf — PDF"
         "💬 Murojat uchun? @Rustamov_v1",
         parse_mode="HTML",
         reply_markup=main_kb(uid),
