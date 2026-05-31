@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TOKEN = "YANGI_TOKEN_NI_JOYLANG"  # <-- Yangi tokenni qo'ying!
+TOKEN = "8964353995:AAFgRTesY5nYBku_fyuFMNLQ2VW_hPMzOrg"  # <-- Yangi tokenni qo'ying!
 ADMIN_IDS = [123456789]  # Adminlar Telegram ID si (sizning ID)
 
 bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
