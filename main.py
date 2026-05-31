@@ -63,25 +63,30 @@ def _read_txt(file_path):
 
 def _parse_hash_format(lines):
     """
-    # yoki #shu format:
+    Ikki xil formatni qabul qiladi:
+
+    FORMAT A — # va savol bir qatorda:
         # Savol matni
         + To'g'ri javob
         - Noto'g'ri 1
-        - Noto'g'ri 2
-        - Noto'g'ri 3
 
-    Yoki eski ? format:
-        ? Savol matni ?
-        + To'g'ri javob
-        - Noto'g'ri 1
+    FORMAT B — # yolg'iz qatorda, savol keyingi qatorda:
+        #
+        Savol matni
+        +
+        To'g'ri javob
+        -
+        Noto'g'ri 1
     """
     questions = []
     current_q = None
     correct = None
     opts = []
+    # holat: 'idle' | 'need_q' | 'need_correct' | 'need_wrong'
+    state = 'idle'
 
     def flush():
-        nonlocal current_q, correct, opts
+        nonlocal current_q, correct, opts, state
         if current_q and correct and len(opts) >= 2:
             all_opts = opts[:4]
             while len(all_opts) < 4:
@@ -94,35 +99,70 @@ def _parse_hash_format(lines):
                 "options": all_opts,
                 "answer": correct,
             })
-        current_q, correct, opts = None, None, []
+        current_q, correct, opts, state = None, None, [], 'idle'
 
     for raw in lines:
         line = raw.strip()
         if not line:
             continue
 
-        # # Savol yoki ? Savol ? formatini qabul qiladi
+        # # belgisi — savol boshlanishi
         if line.startswith("#") or line.startswith("?"):
             flush()
             q = line[1:].strip()
-            # Oxiridagi ? ni olib tashla
             q = re.sub(r"\s*\?$", "", q).strip()
             if q:
+                # FORMAT A: # Savol matni (bir qatorda)
                 current_q = q
-                correct = None
-                opts = []
+                state = 'idle'
+            else:
+                # FORMAT B: # yolg'iz, savol keyingi qatorda
+                state = 'need_q'
+
+        elif state == 'need_q':
+            # Keyingi qator — savol matni
+            current_q = re.sub(r"\s*\?$", "", line).strip()
+            state = 'idle'
 
         elif line.startswith("+"):
             ans = line[1:].strip()
-            if ans and current_q is not None:
-                correct = ans
-                if ans not in opts:
-                    opts.append(ans)
+            if not ans:
+                # FORMAT B: + yolg'iz, javob keyingi qatorda
+                state = 'need_correct'
+            else:
+                if current_q is not None:
+                    correct = ans
+                    if ans not in opts:
+                        opts.append(ans)
+                    state = 'idle'
+
+        elif state == 'need_correct':
+            correct = line
+            if line not in opts:
+                opts.append(line)
+            state = 'idle'
 
         elif line.startswith("-"):
             ans = line[1:].strip()
-            if ans and current_q is not None and ans not in opts:
-                opts.append(ans)
+            if not ans:
+                # FORMAT B: - yolg'iz, javob keyingi qatorda
+                state = 'need_wrong'
+            else:
+                if current_q is not None and ans not in opts:
+                    opts.append(ans)
+
+        elif state == 'need_wrong':
+            if current_q is not None and line not in opts:
+                opts.append(line)
+            state = 'idle'
+
+        # Agar hech bir belgi bilan boshlanmasa va state 'idle' bo'lsa — o'tkazib yuborish
+        elif state == 'idle':
+            pass
+
+        # Qolgan holatlar — o'tkazib yuborish
+        else:
+            pass
 
     flush()
     return questions
