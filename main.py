@@ -581,14 +581,17 @@ async def cmd_start(message: Message, state: FSMContext):
         "• 📝 Test sonini o'zingiz belgilaysiz\n"
         "• 📊 Batafsil statistika\n"
         "• 📁 Fayllar tarixi\n\n"
-        "📎 <b>Qabul qilinadigan fayl turlari:</b>\n"
-        "• <code>.docx</code> — Word jadval\n"
-        "• <code>.txt</code>  — Matnli fayl\n"
-        "• <code>.xlsx</code> — Excel jadval\n"
-        "• <code>.pdf</code>  — PDF fayl\n\n"
-        "📌 <b>TXT formatlar:</b>\n"
+        "📎 Fayl yuboring\n\n"
+        "📝 <b>TXT Format 1</b> (<code>#</code> belgisi):\n"
         "<code># Savol matni\n+ To'g'ri javob\n- Noto'g'ri 1\n- Noto'g'ri 2\n- Noto'g'ri 3</code>\n\n"
-        "📎 <i>Boshlash uchun fayl yuboring!</i>",
+        "📝 <b>TXT Format 2</b> (A/B/C/D):\n"
+        "<code>1. Savol matni\nA) To'g'ri\nB) Noto'g'ri 1\nC) Noto'g'ri 2\nD) Noto'g'ri 3\nJavob: A</code>\n\n"
+        "📝 <b>TXT Format 3</b> (Pipe):\n"
+        "<code>Savol|A variant|B variant|C variant|D variant</code>\n\n"
+        "📘 <b>DOCX:</b> Jadval (1-ustun: Savol, 2–5: Variantlar)\n"
+        "📊 <b>XLSX:</b> Jadval (A: Savol, B–E: Variantlar)\n"
+        "📄 <b>PDF:</b> Yuqoridagi TXT formatlardan biri"
+        "💬 Murojat uchun? @Rustamov_v1",
         parse_mode="HTML",
         reply_markup=main_kb(uid),
     )
