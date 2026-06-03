@@ -4,6 +4,7 @@ import os
 import random
 import re
 import time
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import (
@@ -32,7 +33,17 @@ os.makedirs("temp", exist_ok=True)
 
 UZBEKISTAN_TZ = timezone(timedelta(hours=5))
 
+async def start_web():
+    app = web.Application()
+    app.router.add_get("/", health)
 
+    runner = web.AppRunner(app)
+    await runner.setup()
+
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    
 def get_uz_time():
     return datetime.now(UZBEKISTAN_TZ)
 
@@ -1392,6 +1403,7 @@ async def main():
     print("🚀 Bot ishga tushdi...")
     print(f"📍 Vaqt: UTC+5 (O'zbekiston)")
     cleanup_old_files()
+    await start_web()
     await dp.start_polling(bot)
 
 
