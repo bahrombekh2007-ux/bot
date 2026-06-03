@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import json
 import os
 import random
 import re
@@ -25,30 +26,36 @@ try:
 except ImportError:
     pass
 
-TOKEN = os.getenv("BOT_TOKEN", "8964353995:AAH9Kg2OVFAWq0tMI5BbBpiIGau-EV2nTow")
+# ─────────────────────────── SOZLAMALAR ──────────────────────────────────────
+
+TOKEN = os.getenv("BOT_TOKEN")
+if not TOKEN:
+    raise ValueError("BOT_TOKEN muhit o'zgaruvchisi o'rnatilmagan! .env fayliga yoki Render Environment ga qo'shing.")
+
+DATA_FILE = "data/users.json"
+os.makedirs("temp", exist_ok=True)
+os.makedirs("data", exist_ok=True)
+
+UZBEKISTAN_TZ = timezone(timedelta(hours=5))
+SUPPORTED_EXT = (".docx", ".doc", ".txt", ".xlsx", ".pdf")
+
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-os.makedirs("temp", exist_ok=True)
 
-UZBEKISTAN_TZ = timezone(timedelta(hours=5))
+# ─────────────────────────── YORDAMCHI FUNKSIYALAR ───────────────────────────
 
-async def start_web():
-    app = web.Application()
-    app.router.add_get("/", health)
-
-    runner = web.AppRunner(app)
-    await runner.setup()
-
-    port = int(os.environ.get("PORT", 10000))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    
 def get_uz_time():
     return datetime.now(UZBEKISTAN_TZ)
 
 
+def get_uz_time_str():
+    return get_uz_time().strftime("%d.%m.%Y %H:%M")
+
+
 def cleanup_old_files(directory="temp", max_age_days=3):
+    if not os.path.exists(directory):
+        return
     cutoff = time.time() - max_age_days * 86400
     for name in os.listdir(directory):
         path = os.path.join(directory, name)
@@ -59,9 +66,57 @@ def cleanup_old_files(directory="temp", max_age_days=3):
             pass
 
 
+# ─────────────────────────── PERSISTENCE ─────────────────────────────────────
+
+def load_users() -> dict:
+    """Foydalanuvchi ma'lumotlarini fayldan yuklaydi."""
+    try:
+        if os.path.exists(DATA_FILE):
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"⚠️ Ma'lumot yuklashda xatolik: {e}")
+    return {}
+
+
+def save_users(data: dict):
+    """Foydalanuvchi ma'lumotlarini faylga saqlaydi."""
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+    except Exception as e:
+        print(f"⚠️ Ma'lumot saqlashda xatolik: {e}")
+
+
+# Foydalanuvchi ma'lumotlari (runtime)
+users: dict = load_users()
+user_messages: dict = {}
+
+
+def get_user(uid: int) -> dict:
+    """Foydalanuvchi ma'lumotini qaytaradi yoki yangi yaratadi."""
+    key = str(uid)
+    if key not in users:
+        users[key] = {
+            "first_visit": get_uz_time_str(),
+            "total_tests": 0,
+            "total_questions": 0,
+            "total_correct": 0,
+            "results": [],
+            "uploaded_docs": [],
+        }
+        save_users(users)
+    return users[key]
+
+
+def save_user(uid: int):
+    """Bitta foydalanuvchi ma'lumotini saqlaydi."""
+    save_users(users)
+
+
 # ─────────────────────────── PARSERLAR ───────────────────────────────────────
 
-def _read_txt(file_path):
+def _read_txt(file_path: str) -> str:
     """TXT faylni turli kodlashlarda o'qiydi."""
     for enc in ("utf-8-sig", "utf-8", "cp1251", "windows-1251", "latin-1"):
         try:
@@ -72,29 +127,24 @@ def _read_txt(file_path):
     return ""
 
 
-def _parse_hash_format(lines):
+def _parse_hash_format(lines: list) -> list:
     """
-    Ikki xil formatni qabul qiladi:
-
     FORMAT A — # va savol bir qatorda:
         # Savol matni
         + To'g'ri javob
         - Noto'g'ri 1
 
-    FORMAT B — # yolg'iz qatorda, savol keyingi qatorda:
+    FORMAT B — # yolg'iz qatorda:
         #
         Savol matni
         +
         To'g'ri javob
-        -
-        Noto'g'ri 1
     """
     questions = []
     current_q = None
     correct = None
     opts = []
-    # holat: 'idle' | 'need_q' | 'need_correct' | 'need_wrong'
-    state = 'idle'
+    state = "idle"
 
     def flush():
         nonlocal current_q, correct, opts, state
@@ -110,82 +160,65 @@ def _parse_hash_format(lines):
                 "options": all_opts,
                 "answer": correct,
             })
-        current_q, correct, opts, state = None, None, [], 'idle'
+        current_q, correct, opts, state = None, None, [], "idle"
 
     for raw in lines:
         line = raw.strip()
         if not line:
             continue
 
-        # # belgisi — savol boshlanishi
         if line.startswith("#") or line.startswith("?"):
             flush()
             q = line[1:].strip()
             q = re.sub(r"\s*\?$", "", q).strip()
             if q:
-                # FORMAT A: # Savol matni (bir qatorda)
                 current_q = q
-                state = 'idle'
+                state = "idle"
             else:
-                # FORMAT B: # yolg'iz, savol keyingi qatorda
-                state = 'need_q'
+                state = "need_q"
 
-        elif state == 'need_q':
-            # Keyingi qator — savol matni
+        elif state == "need_q":
             current_q = re.sub(r"\s*\?$", "", line).strip()
-            state = 'idle'
+            state = "idle"
 
         elif line.startswith("+"):
             ans = line[1:].strip()
             if not ans:
-                # FORMAT B: + yolg'iz, javob keyingi qatorda
-                state = 'need_correct'
-            else:
-                if current_q is not None:
-                    correct = ans
-                    if ans not in opts:
-                        opts.append(ans)
-                    state = 'idle'
+                state = "need_correct"
+            elif current_q is not None:
+                correct = ans
+                if ans not in opts:
+                    opts.append(ans)
+                state = "idle"
 
-        elif state == 'need_correct':
+        elif state == "need_correct":
             correct = line
             if line not in opts:
                 opts.append(line)
-            state = 'idle'
+            state = "idle"
 
         elif line.startswith("-"):
             ans = line[1:].strip()
             if not ans:
-                # FORMAT B: - yolg'iz, javob keyingi qatorda
-                state = 'need_wrong'
-            else:
-                if current_q is not None and ans not in opts:
-                    opts.append(ans)
+                state = "need_wrong"
+            elif current_q is not None and ans not in opts:
+                opts.append(ans)
 
-        elif state == 'need_wrong':
+        elif state == "need_wrong":
             if current_q is not None and line not in opts:
                 opts.append(line)
-            state = 'idle'
-
-        # Agar hech bir belgi bilan boshlanmasa va state 'idle' bo'lsa — o'tkazib yuborish
-        elif state == 'idle':
-            pass
-
-        # Qolgan holatlar — o'tkazib yuborish
-        else:
-            pass
+            state = "idle"
 
     flush()
     return questions
 
 
-def _parse_numbered_abcd(lines):
+def _parse_numbered_abcd(lines: list) -> list:
     """
     1. Savol matni
     A) To'g'ri javob
     B) Noto'g'ri 1
-    C) Noto'g'ri 2
-    D) Noto'g'ri 3
+    ...
     Javob: A
     """
     questions = []
@@ -218,8 +251,6 @@ def _parse_numbered_abcd(lines):
         if m:
             flush()
             current_q = m.group(2).strip()
-            opts_dict = {}
-            correct_letter = None
             continue
 
         m = re.match(r"^([A-Da-d])[.)]\s+(.+)$", line)
@@ -229,7 +260,7 @@ def _parse_numbered_abcd(lines):
 
         m = re.match(
             r"^(?:Javob|To'g'ri\s*javob|Answer|Ans|Togri\s*javob|Javobi)[:\s]*([A-Da-d])",
-            line, re.IGNORECASE
+            line, re.IGNORECASE,
         )
         if m:
             correct_letter = m.group(1).upper()
@@ -238,7 +269,7 @@ def _parse_numbered_abcd(lines):
     return questions
 
 
-def _parse_pipe(lines):
+def _parse_pipe(lines: list) -> list:
     """Savol|Javob A|Javob B|Javob C|Javob D"""
     questions = []
     for line in lines:
@@ -252,7 +283,7 @@ def _parse_pipe(lines):
     return questions
 
 
-def _parse_qa_format(lines):
+def _parse_qa_format(lines: list) -> list:
     """
     Savol: Savol matni?
     Javob: To'g'ri javob
@@ -279,15 +310,15 @@ def _parse_qa_format(lines):
 
         if re.match(r"^(savol|question)\s*:", line, re.IGNORECASE):
             flush()
-            current_q = re.split(r":\s*", line, maxsplit=1, flags=re.IGNORECASE)[-1].strip()
+            current_q = re.split(r":\s*", line, maxsplit=1)[-1].strip()
         elif re.match(r"^(javob|answer)\s*:", line, re.IGNORECASE):
-            current_ans = re.split(r":\s*", line, maxsplit=1, flags=re.IGNORECASE)[-1].strip()
+            current_ans = re.split(r":\s*", line, maxsplit=1)[-1].strip()
 
     flush()
     return questions
 
 
-def parse_txt(file_path):
+def parse_txt(file_path: str) -> list:
     """TXT faylni avtomatik format aniqlab parse qiladi."""
     content = _read_txt(file_path)
     if not content:
@@ -298,7 +329,6 @@ def parse_txt(file_path):
     if not non_empty:
         return []
 
-    # Format aniqlanishi
     has_hash = any(l.startswith("#") for l in non_empty)
     has_question_mark = any(l.startswith("?") for l in non_empty)
     has_plus = any(l.startswith("+") for l in non_empty)
@@ -308,43 +338,50 @@ def parse_txt(file_path):
     has_javob_key = any(re.match(r"^(javob|answer)\s*:", l, re.IGNORECASE) for l in non_empty)
     has_savol_key = any(re.match(r"^(savol|question)\s*:", l, re.IGNORECASE) for l in non_empty)
 
-    # 1. # yoki ? + - format (eng keng tarqalgan)
     if (has_hash or has_question_mark) and has_plus:
         result = _parse_hash_format(lines)
         if result:
             return result
 
-    # 2. Raqamli A/B/C/D format
     if has_numbered and has_abcd:
         result = _parse_numbered_abcd(lines)
         if result:
             return result
 
-    # 3. Pipe format
     if has_pipe:
         result = _parse_pipe(non_empty)
         if result:
             return result
 
-    # 4. Savol: Javob: format
     if has_savol_key or has_javob_key:
         result = _parse_qa_format(lines)
         if result:
             return result
 
-    # 5. Agar hech narsa topilmasa — barcha parserlarni sinab ko'r
-    for parser in [_parse_hash_format, _parse_numbered_abcd, _parse_pipe, _parse_qa_format]:
-        result = parser(lines if parser != _parse_pipe else non_empty)
+    for parser in [_parse_hash_format, _parse_numbered_abcd, _parse_qa_format]:
+        result = parser(lines)
         if result:
             return result
+
+    result = _parse_pipe(non_empty)
+    if result:
+        return result
 
     return []
 
 
-def parse_docx(file_path):
-    """DOCX fayldan savollarni o'qiydi (jadval va paragraf)."""
-    from docx import Document
-    doc = Document(file_path)
+def parse_docx(file_path: str) -> list:
+    """DOCX fayldan savollarni o'qiydi."""
+    try:
+        from docx import Document
+    except ImportError:
+        return []
+
+    try:
+        doc = Document(file_path)
+    except Exception:
+        return []
+
     questions = []
 
     def add_q(question, options, answer):
@@ -358,7 +395,7 @@ def parse_docx(file_path):
         rows = []
         for row in table.rows:
             cells = [c.text.strip() for c in row.cells]
-            cells = list(dict.fromkeys(cells))  # duplikat celllarni olib tashla
+            cells = list(dict.fromkeys(cells))
             cells = [c for c in cells if c]
             if cells:
                 rows.append(cells)
@@ -366,129 +403,114 @@ def parse_docx(file_path):
         if not rows:
             continue
 
-        # 1 ustunli jadval (har 5 qator = 1 savol)
         if all(len(r) == 1 for r in rows):
             flat = [r[0] for r in rows]
             for i in range(0, len(flat), 5):
-                b = flat[i:i + 5]
+                b = flat[i : i + 5]
                 if len(b) == 5:
                     add_q(b[0], b[1:], b[1])
             continue
 
-        # Ko'p ustunli jadval
         for r in rows:
             if len(r) >= 5:
                 add_q(r[0], r[1:5], r[1])
             elif len(r) == 3:
-                # Savol | To'g'ri | Noto'g'ri format
                 add_q(r[0], [r[1], r[2], "Variant C", "Variant D"], r[1])
 
-    # Jadvaldan savol topilmasa — paragraflardan o'qi
     if not questions:
         lines = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
-        # Avval # format sinab ko'r
-        result = _parse_hash_format(lines)
-        if result:
-            return result
-        # Keyin raqamli format
-        result = _parse_numbered_abcd(lines)
-        if result:
-            return result
-        # Oddiy 5-qatorli blok
+        for parser in [_parse_hash_format, _parse_numbered_abcd]:
+            result = parser(lines)
+            if result:
+                return result
         for i in range(0, len(lines), 5):
-            b = lines[i:i + 5]
+            b = lines[i : i + 5]
             if len(b) == 5:
                 add_q(b[0], b[1:], b[1])
 
     return questions
 
 
-def parse_xlsx(file_path):
+def parse_xlsx(file_path: str) -> list:
     """Excel fayldan savollarni o'qiydi."""
     try:
         import openpyxl
+    except ImportError:
+        return []
+
+    try:
         wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
         questions = []
         for sheet in wb.worksheets:
-            rows = []
             for row in sheet.iter_rows(values_only=True):
                 cells = [str(c).strip() for c in row if c is not None and str(c).strip()]
-                if cells:
-                    rows.append(cells)
-            for r in rows:
-                if len(r) >= 5:
-                    q, *opts = r[:5]
-                    questions.append({"question": q, "options": opts, "answer": opts[0]})
-                elif len(r) == 5:
-                    questions.append({"question": r[0], "options": r[1:5], "answer": r[1]})
+                if len(cells) >= 5:
+                    q, *opts = cells[:5]
+                    questions.append({"question": q, "options": opts[:4], "answer": opts[0]})
+        wb.close()
         return questions
-    except ImportError:
-        return []
     except Exception:
         return []
 
 
-def parse_pdf(file_path):
+def parse_pdf(file_path: str) -> list:
     """PDF fayldan savollarni o'qiydi."""
     try:
         import pdfplumber
+    except ImportError:
+        return []
+
+    try:
         lines = []
         with pdfplumber.open(file_path) as pdf:
             for page in pdf.pages:
                 text = page.extract_text()
                 if text:
                     lines.extend(text.splitlines())
+
         lines = [l.strip() for l in lines if l.strip()]
         if not lines:
             return []
-        # Barcha formatlarni sinab ko'r
+
         for parser in [_parse_hash_format, _parse_numbered_abcd, _parse_pipe, _parse_qa_format]:
             result = parser(lines)
             if result:
                 return result
         return []
-    except ImportError:
-        return []
     except Exception:
         return []
 
 
-# ─────────────────────────── FSM & GLOBAL STATE ──────────────────────────────
-
-class TestStates(StatesGroup):
-    setting_count = State()
-    testing = State()
-
-
-users: dict = {}
-user_messages: dict = {}
-
-SUPPORTED_EXT = (".docx", ".doc", ".txt", ".xlsx", ".pdf")
-
-
-def convert_doc_to_docx(doc_path, docx_path):
+def convert_doc_to_docx(doc_path: str, docx_path: str) -> str:
     """DOC faylni DOCX ga aylantiradi (LibreOffice orqali)."""
-    import shutil, subprocess
-    for soffice in ["soffice", "libreoffice",
-                    r"C:\Program Files\LibreOffice\program\soffice.exe",
-                    r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"]:
-        found = (shutil.which(soffice) or
-                 (os.path.isabs(soffice) and os.path.exists(soffice)))
+    import shutil
+    import subprocess
+
+    candidates = [
+        "soffice",
+        "libreoffice",
+        r"C:\Program Files\LibreOffice\program\soffice.exe",
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+    ]
+
+    for soffice in candidates:
+        found = shutil.which(soffice) or (os.path.isabs(soffice) and os.path.exists(soffice))
         if found:
-            out_dir = os.path.dirname(docx_path)
+            out_dir = os.path.dirname(docx_path) or "."
             subprocess.run(
-                [soffice, "--headless", "--convert-to", "docx",
-                 "--outdir", out_dir, doc_path],
-                check=True, capture_output=True, timeout=60,
+                [soffice, "--headless", "--convert-to", "docx", "--outdir", out_dir, doc_path],
+                check=True,
+                capture_output=True,
+                timeout=60,
             )
             auto_out = os.path.join(
                 out_dir,
-                os.path.splitext(os.path.basename(doc_path))[0] + ".docx"
+                os.path.splitext(os.path.basename(doc_path))[0] + ".docx",
             )
-            if os.path.exists(auto_out):
-                if auto_out != docx_path:
-                    os.rename(auto_out, docx_path)
-                return docx_path
+            if os.path.exists(auto_out) and auto_out != docx_path:
+                os.rename(auto_out, docx_path)
+            return docx_path
+
     raise RuntimeError(
         "LibreOffice topilmadi! .doc faylni ochish uchun o'rnating:\n"
         "Linux: sudo apt install libreoffice\n"
@@ -496,55 +518,68 @@ def convert_doc_to_docx(doc_path, docx_path):
     )
 
 
-def clear_user_test_session(user_id):
-    if user_id not in users:
+# ─────────────────────────── FSM ─────────────────────────────────────────────
+
+class TestStates(StatesGroup):
+    setting_count = State()
+    testing = State()
+
+
+# ─────────────────────────── YORDAMCHI ───────────────────────────────────────
+
+def clear_user_test_session(uid: int):
+    key = str(uid)
+    if key not in users:
         return
-    for key in [
-        "questions", "total_questions", "file_name", "uploaded_file",
+    for k in [
         "selected_questions", "total_test", "current_index", "score",
         "answers", "poll_ids", "waiting_for_skip", "current_poll_message_id",
         "current_poll_id", "current_question_index", "current_answer_recorded",
+        "test_start_time",
     ]:
-        users[user_id].pop(key, None)
+        users[key].pop(k, None)
 
 
-async def safe_delete(chat_id, message_id):
+async def safe_delete(chat_id: int, message_id: int):
     try:
         await bot.delete_message(chat_id, message_id)
     except Exception:
         pass
 
 
-async def clean_chat(user_id, chat_id, keep_last=0):
-    msgs = user_messages.get(user_id, [])
-    to_del = msgs[:-keep_last] if keep_last else msgs
+async def clean_chat(uid: int, chat_id: int, keep_last: int = 0):
+    msgs = user_messages.get(uid, [])
+    to_del = msgs[:-keep_last] if keep_last else msgs[:]
     for mid in to_del:
         await safe_delete(chat_id, mid)
-    user_messages[user_id] = msgs[-keep_last:] if keep_last else []
+    user_messages[uid] = msgs[-keep_last:] if keep_last else []
 
 
-async def add_msg(user_id, message_id):
-    user_messages.setdefault(user_id, [])
-    if message_id not in user_messages[user_id]:
-        user_messages[user_id].append(message_id)
+async def add_msg(uid: int, message_id: int):
+    user_messages.setdefault(uid, [])
+    if message_id not in user_messages[uid]:
+        user_messages[uid].append(message_id)
 
 
-# ──────────────────────────── KLAVIATURALAR ───────────────────────────────────
+def _norm(text: str, limit: int = 100) -> str:
+    t = str(text).strip()
+    return (t[: limit - 1] + "…") if len(t) > limit else t
 
-def main_kb(user_id=None):
+
+# ─────────────────────────── KLAVIATURALAR ───────────────────────────────────
+
+def main_kb(uid=None):
     row1 = [KeyboardButton(text="📊 Test natijam"), KeyboardButton(text="🆘 Yordam")]
     row2 = [KeyboardButton(text="📄 Yangi test"), KeyboardButton(text="📁 Fayllarim")]
     row3 = [KeyboardButton(text="⭐ Statistika"), KeyboardButton(text="⚙️ Sozlamalar")]
-    if user_id and users.get(user_id, {}).get("uploaded_docs"):
+    key = str(uid) if uid else None
+    if key and users.get(key, {}).get("uploaded_docs"):
         row2.append(KeyboardButton(text="🔁 Qayta boshlash"))
     return ReplyKeyboardMarkup(keyboard=[row1, row2, row3], resize_keyboard=True)
 
 
-def count_kb(total):
-    opts = [n for n in (5, 10, 15, 20, 25, 30, 40, 50) if total >= n]
-    if total not in opts:
-        opts.append(total)
-    opts.sort()
+def count_kb(total: int):
+    opts = sorted({n for n in (5, 10, 15, 20, 25, 30, 40, 50) if n <= total} | {total})
     buttons, row = [], []
     for i, c in enumerate(opts):
         label = f"📚 Hammasi ({c})" if c == total else f"📝 {c} ta"
@@ -568,20 +603,38 @@ def poll_kb():
     ])
 
 
-# ─────────────────────────── HANDLER: START ───────────────────────────────────
+# ─────────────────────────── WEB SERVER ──────────────────────────────────────
+
+async def health(request):
+    """Render health check uchun."""
+    return web.Response(
+        text=json.dumps({"status": "ok", "time": get_uz_time_str()}),
+        content_type="application/json",
+    )
+
+
+async def start_web():
+    app = web.Application()
+    app.router.add_get("/", health)
+    app.router.add_get("/health", health)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"🌐 Web server port {port} da ishga tushdi")
+
+
+# ─────────────────────────── HANDLER: START ──────────────────────────────────
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     uid = message.from_user.id
     await clean_chat(uid, message.chat.id)
-
-    if uid not in users:
-        users[uid] = {
-            "first_visit": get_uz_time().strftime("%d.%m.%Y %H:%M"),
-            "total_tests": 0, "total_questions": 0, "total_correct": 0,
-            "results": [], "uploaded_docs": [],
-        }
+    get_user(uid)  # Yangi foydalanuvchi yaratadi yoki mavjudini qaytaradi
 
     msg = await message.answer(
         "🎯 <b>TEST MASTER BOT</b>\n"
@@ -591,20 +644,20 @@ async def cmd_start(message: Message, state: FSMContext):
         "• 🎲 Savollar va variantlar aralash\n"
         "• 📝 Test sonini o'zingiz belgilaysiz\n"
         "• 📊 Batafsil statistika\n"
-        "• 📁 Fayllar tarixi\n\n"
-        "📎 Fayl yuboring\n\n"
-        "• .txt — Matnli fayl"
-        "• .docx — Word"
-        "• .xlsx — Excel"
-        "• .pdf — PDF"
-        "💬 Murojat uchun? @Rustamov_v1",
+        "• 📁 Fayllar tarixi (qayta ishlating!)\n\n"
+        "📎 <b>Qo'llab-quvvatlanadigan formatlar:</b>\n"
+        "• <code>.txt</code> — Matnli fayl\n"
+        "• <code>.docx</code> — Word\n"
+        "• <code>.xlsx</code> — Excel\n"
+        "• <code>.pdf</code> — PDF\n\n"
+        "💬 Murojaat: @Rustamov_v1",
         parse_mode="HTML",
         reply_markup=main_kb(uid),
     )
     await add_msg(uid, msg.message_id)
 
 
-# ─────────────────────────── HANDLER: MENYU ───────────────────────────────────
+# ─────────────────────────── HANDLER: MENYU ──────────────────────────────────
 
 @dp.message(F.text == "📄 Yangi test")
 async def new_test(message: Message, state: FSMContext):
@@ -660,14 +713,15 @@ async def cmd_help(message: Message):
 async def test_result(message: Message):
     uid = message.from_user.id
     await clean_chat(uid, message.chat.id)
-    results = users.get(uid, {}).get("results", [])
+    results = users.get(str(uid), {}).get("results", [])
 
     if not results:
         msg = await message.answer(
             "📊 <b>TEST NATIJALARI</b>\n"
             "━━━━━━━━━━━━━━━━━━━\n\n"
             "❌ Hali natija yo'q.\n\n📎 Yangi test boshlang!",
-            parse_mode="HTML", reply_markup=main_kb(uid),
+            parse_mode="HTML",
+            reply_markup=main_kb(uid),
         )
         await add_msg(uid, msg.message_id)
         return
@@ -686,7 +740,7 @@ async def test_result(message: Message):
 @dp.message(F.text == "⭐ Statistika")
 async def my_stats(message: Message):
     uid = message.from_user.id
-    d = users.get(uid, {})
+    d = users.get(str(uid), {})
     results = d.get("results", [])
     avg = sum(r["percentage"] for r in results) / len(results) if results else 0
     best = max(results, key=lambda x: x["percentage"]) if results else None
@@ -709,44 +763,51 @@ async def my_stats(message: Message):
 @dp.message(F.text == "📁 Fayllarim")
 async def my_files(message: Message):
     uid = message.from_user.id
-    docs = users.get(uid, {}).get("uploaded_docs", [])
+    docs = users.get(str(uid), {}).get("uploaded_docs", [])
 
     if not docs:
         msg = await message.answer(
             "📁 <b>Fayllarim</b>\n━━━━━━━━━━━━━━━━━━━\n\n"
             "❌ Hali hech qanday fayl yuklanmagan.\n\n📎 Fayl yuboring!",
-            parse_mode="HTML", reply_markup=main_kb(uid),
+            parse_mode="HTML",
+            reply_markup=main_kb(uid),
         )
         await add_msg(uid, msg.message_id)
         return
 
     text = "📁 <b>Mening fayllarim</b>\n━━━━━━━━━━━━━━━━━━━\n\n"
-    for i, doc in enumerate(docs[-10:], 1):
-        text += f"<b>{i}.</b> {doc['file_name']} — <b>{len(doc['questions'])} savol</b>\n   📅 {doc['uploaded_at']}\n\n"
+    last_docs = docs[-10:]
+    for i, doc in enumerate(last_docs, 1):
+        q_count = len(doc.get("questions", []))
+        text += f"<b>{i}.</b> {doc['file_name']} — <b>{q_count} savol</b>\n   📅 {doc.get('uploaded_at', '')}\n\n"
 
     buttons = [
         [InlineKeyboardButton(
             text=f"📄 {d['file_name'][:35]}",
-            callback_data=f"selfile_{i}"
+            callback_data=f"selfile_{i}",
         )]
         for i, d in enumerate(docs[-5:])
     ]
     buttons.append([InlineKeyboardButton(text="🏠 Menyu", callback_data="main_menu")])
 
-    msg = await message.answer(text, parse_mode="HTML",
-                               reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    msg = await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
     await add_msg(uid, msg.message_id)
 
 
 @dp.message(F.text == "⚙️ Sozlamalar")
-async def settings(message: Message):
+async def settings_menu(message: Message):
     uid = message.from_user.id
     msg = await message.answer(
         "⚙️ <b>SOZLAMALAR</b>\n━━━━━━━━━━━━━━━━━━━\n\n"
         "🔄 Savollar aralashtirish: ✅\n"
         "🔄 Variantlar aralashtirish: ✅\n\n"
         "<i>Tez orada qo'shimcha sozlamalar...</i>",
-        parse_mode="HTML", reply_markup=main_kb(uid)
+        parse_mode="HTML",
+        reply_markup=main_kb(uid),
     )
     await add_msg(uid, msg.message_id)
 
@@ -754,16 +815,18 @@ async def settings(message: Message):
 @dp.message(F.text == "🔁 Qayta boshlash")
 async def restart_list(message: Message):
     uid = message.from_user.id
-    docs = users.get(uid, {}).get("uploaded_docs", [])
+    docs = users.get(str(uid), {}).get("uploaded_docs", [])
     if not docs:
-        msg = await message.answer("❌ Oldingi fayl topilmadi. Avval fayl yuboring!",
-                                   reply_markup=main_kb(uid))
+        msg = await message.answer(
+            "❌ Oldingi fayl topilmadi. Avval fayl yuboring!",
+            reply_markup=main_kb(uid),
+        )
         await add_msg(uid, msg.message_id)
         return
 
     buttons = [
         [InlineKeyboardButton(
-            text=f"{i + 1}. {d['file_name']} ({len(d['questions'])} ta)",
+            text=f"{i + 1}. {d['file_name']} ({len(d.get('questions', []))} ta)",
             callback_data=f"restart_{i}",
         )]
         for i, d in enumerate(docs[-5:])
@@ -772,24 +835,26 @@ async def restart_list(message: Message):
     await clean_chat(uid, message.chat.id)
     msg = await message.answer(
         "🔁 <b>OLDINGI FAYLLAR</b>\n━━━━━━━━━━━━━━━━━━━\n\nBirini tanlang:",
-        parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await add_msg(uid, msg.message_id)
 
 
-# ─────────────────────── CALLBACK: FAYL TANLASH ──────────────────────────────
+# ─────────────────────────── CALLBACK: FAYL TANLASH ──────────────────────────
 
 @dp.callback_query(F.data.startswith("selfile_"))
 async def select_file_cb(callback: CallbackQuery, state: FSMContext):
     uid = callback.from_user.id
-    docs = users.get(uid, {}).get("uploaded_docs", [])
+    docs = users.get(str(uid), {}).get("uploaded_docs", [])
     try:
         idx = int(callback.data.split("_")[1])
         doc = docs[idx]
     except (ValueError, IndexError):
-        await callback.answer("❌ Xatolik!", show_alert=True)
+        await callback.answer("❌ Xatolik! Fayl topilmadi.", show_alert=True)
         return
-    users[uid].update({
+
+    users[str(uid)].update({
         "questions": doc["questions"],
         "total_questions": len(doc["questions"]),
         "file_name": doc["file_name"],
@@ -801,14 +866,15 @@ async def select_file_cb(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data.startswith("restart_"))
 async def restart_doc_cb(callback: CallbackQuery, state: FSMContext):
     uid = callback.from_user.id
-    docs = users.get(uid, {}).get("uploaded_docs", [])
+    docs = users.get(str(uid), {}).get("uploaded_docs", [])
     try:
         idx = int(callback.data.split("_")[1])
         doc = docs[idx]
     except (ValueError, IndexError):
         await callback.answer("❌ Noto'g'ri tanlov!", show_alert=True)
         return
-    users[uid].update({
+
+    users[str(uid)].update({
         "questions": doc["questions"],
         "total_questions": len(doc["questions"]),
         "file_name": doc["file_name"],
@@ -817,12 +883,12 @@ async def restart_doc_cb(callback: CallbackQuery, state: FSMContext):
     await _show_count_selection(callback, uid, len(doc["questions"]))
 
 
-async def _show_count_selection(callback, uid, total):
+async def _show_count_selection(callback: CallbackQuery, uid: int, total: int):
     txt = (
         f"📝 <b>TEST SONINI TANLANG</b>\n"
         f"━━━━━━━━━━━━━━━━━━━\n\n"
         f"📚 Mavjud savollar: <b>{total} ta</b>\n\n"
-        f"<i>Variantni tanlang</i> 👇"
+        f"<i>Variantni tanlang 👇</i>"
     )
     try:
         await callback.message.edit_text(txt, parse_mode="HTML", reply_markup=count_kb(total))
@@ -832,7 +898,7 @@ async def _show_count_selection(callback, uid, total):
     await callback.answer()
 
 
-# ─────────────────────── HANDLER: FAYL QABUL QILISH ─────────────────────────
+# ─────────────────────────── HANDLER: FAYL QABUL ─────────────────────────────
 
 @dp.message(F.document)
 async def handle_document(message: Message, state: FSMContext):
@@ -851,7 +917,8 @@ async def handle_document(message: Message, state: FSMContext):
             "• <code>.doc</code>  — Eski Word\n"
             "• <code>.xlsx</code> — Excel\n"
             "• <code>.pdf</code>  — PDF",
-            parse_mode="HTML", reply_markup=main_kb(uid),
+            parse_mode="HTML",
+            reply_markup=main_kb(uid),
         )
         await add_msg(uid, msg.message_id)
         return
@@ -862,6 +929,7 @@ async def handle_document(message: Message, state: FSMContext):
     )
     await add_msg(uid, loading.message_id)
 
+    save_path = None
     try:
         cleanup_old_files()
         tg_file = await bot.get_file(doc.file_id)
@@ -871,27 +939,21 @@ async def handle_document(message: Message, state: FSMContext):
             f.write(downloaded.read())
 
         # .doc → .docx konversiya
+        parse_ext = ext
         if ext == ".doc":
             converted = save_path.replace(".doc", "_conv.docx")
             save_path = convert_doc_to_docx(save_path, converted)
-            ext = ".docx"
+            parse_ext = ".docx"
 
         # Parse qilish
-        if ext == ".txt":
-            questions = parse_txt(save_path)
-            fmt_name = "TXT"
-        elif ext == ".docx":
-            questions = parse_docx(save_path)
-            fmt_name = "DOCX"
-        elif ext == ".xlsx":
-            questions = parse_xlsx(save_path)
-            fmt_name = "XLSX"
-        elif ext == ".pdf":
-            questions = parse_pdf(save_path)
-            fmt_name = "PDF"
-        else:
-            questions = []
-            fmt_name = "?"
+        fmt_map = {
+            ".txt": (parse_txt, "TXT"),
+            ".docx": (parse_docx, "DOCX"),
+            ".xlsx": (parse_xlsx, "XLSX"),
+            ".pdf": (parse_pdf, "PDF"),
+        }
+        parser_fn, fmt_name = fmt_map.get(parse_ext, (lambda p: [], "?"))
+        questions = parser_fn(save_path)
 
         await clean_chat(uid, message.chat.id)
 
@@ -901,38 +963,40 @@ async def handle_document(message: Message, state: FSMContext):
                 "<code># Savol matni\n+ To'g'ri javob\n- Noto'g'ri 1\n- Noto'g'ri 2\n- Noto'g'ri 3</code>\n\n"
                 "yoki\n\n"
                 "<code>1. Savol\nA) To'g'ri\nB) Noto'g'ri 1\nC) Noto'g'ri 2\nD) Noto'g'ri 3\nJavob: A</code>"
-                if ext == ".txt" else
-                "📘 <b>DOCX/XLSX uchun:</b> 5 ustunli jadval kerak\n"
-                "(1-ustun: Savol, 2-5-ustunlar: Variantlar)"
+                if parse_ext == ".txt"
+                else "📘 <b>DOCX/XLSX uchun:</b> 5 ustunli jadval kerak\n(1-ustun: Savol, 2-5-ustunlar: Variantlar)"
             )
             msg = await message.answer(
                 f"❌ <b>Savol topilmadi!</b>\n\n"
                 f"<i>{fmt_name} fayldan savol o'qib bo'lmadi.</i>\n\n{hint}",
-                parse_mode="HTML", reply_markup=main_kb(uid),
+                parse_mode="HTML",
+                reply_markup=main_kb(uid),
             )
             await add_msg(uid, msg.message_id)
             return
 
         # Saqlash
-        existing = users.setdefault(uid, {
-            "first_visit": get_uz_time().strftime("%d.%m.%Y %H:%M"),
-            "total_tests": 0, "total_questions": 0, "total_correct": 0,
-            "results": [], "uploaded_docs": [],
-        })
-        uploaded_docs = existing.get("uploaded_docs", [])
+        user_data = get_user(uid)
+        uploaded_docs = user_data.get("uploaded_docs", [])
         uploaded_docs.append({
             "file_name": doc.file_name,
             "file_path": save_path,
             "questions": questions,
-            "uploaded_at": get_uz_time().strftime("%d.%m.%Y %H:%M"),
+            "uploaded_at": get_uz_time_str(),
         })
-        existing.update({
+        # Maksimal 20 ta fayl saqlash
+        if len(uploaded_docs) > 20:
+            uploaded_docs = uploaded_docs[-20:]
+
+        user_data.update({
             "questions": questions,
             "total_questions": len(questions),
             "file_name": doc.file_name,
             "uploaded_file": save_path,
             "uploaded_docs": uploaded_docs,
         })
+        save_user(uid)
+
         await state.set_state(TestStates.setting_count)
 
         msg = await message.answer(
@@ -949,35 +1013,47 @@ async def handle_document(message: Message, state: FSMContext):
 
     except Exception as e:
         await clean_chat(uid, message.chat.id)
+        err_text = str(e)[:300]
         msg = await message.answer(
-            f"❌ <b>Xatolik yuz berdi:</b>\n<code>{str(e)[:300]}</code>",
-            parse_mode="HTML", reply_markup=main_kb(uid),
+            f"❌ <b>Xatolik yuz berdi:</b>\n<code>{err_text}</code>\n\n"
+            "Iltimos, fayl formatini tekshiring va qaytadan urinib ko'ring.",
+            parse_mode="HTML",
+            reply_markup=main_kb(uid),
         )
         await add_msg(uid, msg.message_id)
 
 
-# ─────────────────────── HANDLER: TEST SOZLASH ────────────────────────────────
+# ─────────────────────────── HANDLER: TEST SOZLASH ───────────────────────────
 
 @dp.callback_query(F.data.startswith("count_"))
 async def select_count(callback: CallbackQuery, state: FSMContext):
     uid = callback.from_user.id
-    if uid not in users:
+    key = str(uid)
+    if key not in users or "total_questions" not in users[key]:
         await callback.answer("❌ Avval fayl yuklang!", show_alert=True)
         return
-    count = int(callback.data.split("_")[1])
+
+    try:
+        count = int(callback.data.split("_")[1])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Noto'g'ri qiymat!", show_alert=True)
+        return
+
     await safe_delete(callback.message.chat.id, callback.message.message_id)
     await start_test(callback.message, uid, count, state)
     await callback.answer(f"✅ {count} ta test boshlandi!")
 
 
 @dp.callback_query(F.data == "random_count")
-async def random_count(callback: CallbackQuery, state: FSMContext):
+async def random_count_cb(callback: CallbackQuery, state: FSMContext):
     uid = callback.from_user.id
-    if uid not in users:
+    key = str(uid)
+    if key not in users or "total_questions" not in users[key]:
         await callback.answer("❌ Avval fayl yuklang!", show_alert=True)
         return
-    total = users[uid]["total_questions"]
-    count = random.randint(5, min(50, total))
+
+    total = users[key]["total_questions"]
+    count = random.randint(min(5, total), min(50, total))
     await safe_delete(callback.message.chat.id, callback.message.message_id)
     await start_test(callback.message, uid, count, state)
     await callback.answer(f"🎲 {count} ta test boshlandi!")
@@ -1001,40 +1077,51 @@ async def custom_count_prompt(callback: CallbackQuery, state: FSMContext):
 @dp.message(TestStates.setting_count)
 async def process_custom_count(message: Message, state: FSMContext):
     uid = message.from_user.id
+    key = str(uid)
+
     if message.text and message.text.startswith("/"):
         return
+
     await clean_chat(uid, message.chat.id)
-    if uid not in users or "total_questions" not in users[uid]:
+
+    if key not in users or "total_questions" not in users[key]:
         msg = await message.answer("❌ Avval fayl yuklang!", reply_markup=main_kb(uid))
         await add_msg(uid, msg.message_id)
         await state.clear()
         return
+
     try:
         count = int(message.text.strip())
-        total = users[uid]["total_questions"]
+        total = users[key]["total_questions"]
         if count < 1 or count > total:
-            msg = await message.answer(f"❌ 1 dan {total} gacha raqam kiriting",
-                                       reply_markup=main_kb(uid))
+            msg = await message.answer(
+                f"❌ 1 dan {total} gacha raqam kiriting",
+                reply_markup=main_kb(uid),
+            )
             await add_msg(uid, msg.message_id)
             return
         await start_test(message, uid, count, state)
     except (ValueError, TypeError):
-        msg = await message.answer("❌ Faqat raqam kiriting! (Masalan: 10)",
-                                   reply_markup=main_kb(uid))
+        msg = await message.answer(
+            "❌ Faqat raqam kiriting! (Masalan: 10)",
+            reply_markup=main_kb(uid),
+        )
         await add_msg(uid, msg.message_id)
 
 
-# ─────────────────────── TEST JARAYONI ───────────────────────────────────────
+# ─────────────────────────── TEST JARAYONI ───────────────────────────────────
 
-async def start_test(message, uid, count, state: FSMContext):
+async def start_test(message: Message, uid: int, count: int, state: FSMContext):
     await clean_chat(uid, message.chat.id)
-    pool = copy.deepcopy(users[uid]["questions"])
+    key = str(uid)
+
+    pool = copy.deepcopy(users[key]["questions"])
     random.shuffle(pool)
     selected = pool[:count]
     for q in selected:
         random.shuffle(q["options"])
 
-    users[uid].update({
+    users[key].update({
         "selected_questions": selected,
         "total_test": count,
         "current_index": 0,
@@ -1044,7 +1131,9 @@ async def start_test(message, uid, count, state: FSMContext):
         "waiting_for_skip": False,
         "current_answer_recorded": False,
         "current_poll_message_id": None,
-        "test_start_time": get_uz_time(),
+        "current_poll_id": None,
+        "current_question_index": 0,
+        "test_start_time": get_uz_time_str(),
     })
     await state.set_state(TestStates.testing)
 
@@ -1057,102 +1146,151 @@ async def start_test(message, uid, count, state: FSMContext):
         parse_mode="HTML",
     )
     await add_msg(uid, msg.message_id)
-    await asyncio.sleep(2)
+    await asyncio.sleep(1)
     await clean_chat(uid, message.chat.id)
     await send_poll(message.chat.id, uid)
 
 
-def _norm(text, limit=100):
-    t = str(text).strip()
-    return (t[:limit - 1] + "…") if len(t) > limit else t
+async def send_poll(chat_id: int, uid: int):
+    key = str(uid)
+    data = users.get(key)
+    if not data:
+        return
 
+    idx = data.get("current_index", 0)
+    selected = data.get("selected_questions", [])
 
-async def send_poll(chat_id, uid):
-    data = users[uid]
-    idx = data["current_index"]
-    qd = data["selected_questions"][idx]
+    if idx >= len(selected):
+        return
+
+    qd = selected[idx]
     opts = [_norm(o) for o in qd["options"]]
     ans = _norm(qd["answer"])
 
+    # To'g'ri javob indeksini topish
     try:
         correct_id = opts.index(ans)
     except ValueError:
+        # Agar topilmasa, birinchi variantni to'g'ri deb belgilash
         correct_id = 0
-        opts[0] = ans
+        if opts:
+            opts[0] = ans
+        else:
+            opts = [ans, "Variant B", "Variant C", "Variant D"]
 
     q_text = str(qd["question"]).strip()
     if len(q_text) > 300:
         q_text = q_text[:297] + "..."
 
-    if data.get("current_poll_message_id"):
-        await safe_delete(chat_id, data["current_poll_message_id"])
+    # Variantlar uzunligini tekshirish (Telegram max 100 belgi)
+    opts = [o[:99] for o in opts]
+
+    # Oldingi poll xabarini o'chirish
+    prev_msg_id = data.get("current_poll_message_id")
+    if prev_msg_id:
+        await safe_delete(chat_id, prev_msg_id)
     await clean_chat(uid, chat_id)
 
-    poll_msg = await bot.send_poll(
-        chat_id=chat_id,
-        question=f"📝 {idx + 1}/{data['total_test']}\n\n{q_text}",
-        options=opts,
-        type="quiz",
-        correct_option_id=correct_id,
-        explanation=f"✅ To'g'ri: {ans}",
-        is_anonymous=False,
-        reply_markup=poll_kb(),
-    )
-    data.update({
-        "poll_ids": data["poll_ids"] + [poll_msg.poll.id],
-        "current_poll_id": poll_msg.poll.id,
-        "current_question_index": idx,
-        "current_poll_message_id": poll_msg.message_id,
-        "waiting_for_skip": True,
-        "current_answer_recorded": False,
-    })
+    try:
+        poll_msg = await bot.send_poll(
+            chat_id=chat_id,
+            question=f"📝 {idx + 1}/{data['total_test']}\n\n{q_text}",
+            options=opts,
+            type="quiz",
+            correct_option_id=correct_id,
+            explanation=f"✅ To'g'ri: {ans[:200]}",
+            is_anonymous=False,
+            reply_markup=poll_kb(),
+        )
+        data.update({
+            "poll_ids": data.get("poll_ids", []) + [poll_msg.poll.id],
+            "current_poll_id": poll_msg.poll.id,
+            "current_question_index": idx,
+            "current_poll_message_id": poll_msg.message_id,
+            "waiting_for_skip": True,
+            "current_answer_recorded": False,
+        })
+    except Exception as e:
+        print(f"❌ Poll yuborishda xatolik: {e}")
+        try:
+            err_msg = await bot.send_message(
+                chat_id,
+                f"❌ Savol yuborishda xatolik yuz berdi.\n⏭ Keyingisiga o'tish uchun tugmani bosing.",
+                reply_markup=poll_kb(),
+            )
+            data["current_poll_message_id"] = err_msg.message_id
+            data["waiting_for_skip"] = True
+        except Exception:
+            pass
 
 
 @dp.poll_answer()
 async def on_poll_answer(poll_answer):
     uid = poll_answer.user.id
-    data = users.get(uid)
+    key = str(uid)
+    data = users.get(key)
+
     if not data or "selected_questions" not in data:
         return
     if poll_answer.poll_id != data.get("current_poll_id"):
         return
-    if data.get("current_answer_recorded") or not poll_answer.option_ids:
+    if data.get("current_answer_recorded"):
+        return
+    if not poll_answer.option_ids:
         return
 
     cidx = data.get("current_question_index", 0)
-    if cidx >= len(data["selected_questions"]):
+    selected = data.get("selected_questions", [])
+
+    if cidx >= len(selected):
         return
 
-    qd = data["selected_questions"][cidx]
-    chosen = qd["options"][poll_answer.option_ids[0]]
+    qd = selected[cidx]
+    try:
+        chosen = qd["options"][poll_answer.option_ids[0]]
+    except IndexError:
+        return
+
     correct = chosen == qd["answer"]
-    data["answers"].append({
+    data.setdefault("answers", []).append({
         "question": qd["question"],
         "user_answer": chosen,
         "correct_answer": qd["answer"],
         "is_correct": correct,
     })
     if correct:
-        data["score"] += 1
+        data["score"] = data.get("score", 0) + 1
     data["current_answer_recorded"] = True
 
 
 @dp.callback_query(F.data == "show_answer")
 async def show_answer(callback: CallbackQuery):
     uid = callback.from_user.id
-    data = users.get(uid)
+    key = str(uid)
+    data = users.get(key)
+
     if not data or "selected_questions" not in data:
         await callback.answer("❌ Test topilmadi!", show_alert=True)
         return
+
     cidx = data.get("current_question_index", 0)
-    qd = data["selected_questions"][cidx]
-    await callback.answer(f"✅ To'g'ri javob: {qd['answer']}", show_alert=True)
+    selected = data.get("selected_questions", [])
+
+    if cidx >= len(selected):
+        await callback.answer("❌ Savol topilmadi!", show_alert=True)
+        return
+
+    qd = selected[cidx]
+    answer_text = str(qd["answer"])[:200]
+    await callback.answer(f"✅ To'g'ri javob:\n{answer_text}", show_alert=True)
 
 
 @dp.callback_query(F.data == "skip_question")
 async def skip_question(callback: CallbackQuery, state: FSMContext):
     uid = callback.from_user.id
-    data = users.get(uid)
+    key = str(uid)
+    data = users.get(key)
+
     if not data:
         await callback.answer("❌ Test topilmadi!", show_alert=True)
         return
@@ -1161,9 +1299,12 @@ async def skip_question(callback: CallbackQuery, state: FSMContext):
         return
 
     cidx = data.get("current_question_index", 0)
-    if not data.get("current_answer_recorded"):
-        qd = data["selected_questions"][cidx]
-        data["answers"].append({
+    selected = data.get("selected_questions", [])
+
+    # Javob berilmagan bo'lsa, noto'g'ri deb belgilash
+    if not data.get("current_answer_recorded") and cidx < len(selected):
+        qd = selected[cidx]
+        data.setdefault("answers", []).append({
             "question": qd["question"],
             "user_answer": "Javob berilmadi",
             "correct_answer": qd["answer"],
@@ -1172,9 +1313,10 @@ async def skip_question(callback: CallbackQuery, state: FSMContext):
 
     data["waiting_for_skip"] = False
     data["current_answer_recorded"] = False
-    data["current_index"] += 1
+    data["current_index"] = data.get("current_index", 0) + 1
 
-    if data["current_index"] >= data["total_test"]:
+    total_test = data.get("total_test", 0)
+    if data["current_index"] >= total_test:
         await clean_chat(uid, callback.message.chat.id)
         await safe_delete(callback.message.chat.id, callback.message.message_id)
         await show_results(callback.message.chat.id, uid)
@@ -1190,20 +1332,27 @@ async def skip_question(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "stop_test")
 async def stop_test(callback: CallbackQuery, state: FSMContext):
     uid = callback.from_user.id
-    data = users.get(uid)
+    key = str(uid)
+    data = users.get(key)
+
     if not data:
         await callback.answer("❌ Test topilmadi!", show_alert=True)
         return
 
     cidx = data.get("current_question_index", 0)
-    if len(data["answers"]) <= cidx < data["total_test"]:
-        qd = data["selected_questions"][cidx]
-        data["answers"].append({
+    answers = data.get("answers", [])
+    selected = data.get("selected_questions", [])
+
+    # Joriy savolga javob berilmagan bo'lsa
+    if len(answers) <= cidx < len(selected):
+        qd = selected[cidx]
+        answers.append({
             "question": qd["question"],
             "user_answer": "Test yakunlandi",
             "correct_answer": qd["answer"],
             "is_correct": False,
         })
+        data["answers"] = answers
 
     await clean_chat(uid, callback.message.chat.id)
     await safe_delete(callback.message.chat.id, callback.message.message_id)
@@ -1212,13 +1361,14 @@ async def stop_test(callback: CallbackQuery, state: FSMContext):
     await callback.answer("🔴 Test yakunlandi")
 
 
-# ─────────────────────── NATIJALAR ────────────────────────────────────────────
+# ─────────────────────────── NATIJALAR ───────────────────────────────────────
 
-async def show_results(chat_id, uid, stopped=False):
-    data = users[uid]
-    score = data["score"]
-    total = data["total_test"]
-    answered = len(data["answers"])
+async def show_results(chat_id: int, uid: int, stopped: bool = False):
+    key = str(uid)
+    data = users.get(key, {})
+    score = data.get("score", 0)
+    total = data.get("total_test", 0)
+    answered = len(data.get("answers", []))
     pct = (score / total * 100) if total else 0
 
     if pct >= 90:
@@ -1230,12 +1380,18 @@ async def show_results(chat_id, uid, stopped=False):
     else:
         grade, emoji = "O'qish kerak", "📚"
 
-    start = data.get("test_start_time")
+    # Vaqt hisoblash
+    start_str = data.get("test_start_time")
     time_str = ""
-    if start:
-        diff = get_uz_time() - start
-        m, s = diff.seconds // 60, diff.seconds % 60
-        time_str = f"\n⏱ Vaqt: {m} min {s} sek"
+    if start_str:
+        try:
+            start = datetime.strptime(start_str, "%d.%m.%Y %H:%M").replace(tzinfo=UZBEKISTAN_TZ)
+            diff = get_uz_time() - start
+            total_secs = int(diff.total_seconds())
+            m, s = total_secs // 60, total_secs % 60
+            time_str = f"\n⏱ Vaqt: {m} min {s} sek"
+        except Exception:
+            pass
 
     text = (
         f"{emoji} <b>TEST NATIJASI</b>\n━━━━━━━━━━━━━━━━━━━\n\n"
@@ -1250,20 +1406,28 @@ async def show_results(chat_id, uid, stopped=False):
         f"<i>{'⚠️ Test vaqtidan oldin yakunlandi' if stopped else '🎊 Test muvaffaqiyatli yakunlandi!'}</i>"
     )
 
-    data.setdefault("total_tests", 0)
-    data.setdefault("total_questions", 0)
-    data.setdefault("total_correct", 0)
-    data["total_tests"] += 1
-    data["total_questions"] += total
-    data["total_correct"] += score
+    # Statistikani yangilash
+    data["total_tests"] = data.get("total_tests", 0) + 1
+    data["total_questions"] = data.get("total_questions", 0) + total
+    data["total_correct"] = data.get("total_correct", 0) + score
     data.setdefault("results", []).append({
-        "date": get_uz_time().strftime("%d.%m.%Y %H:%M"),
-        "total": total, "score": score, "percentage": pct, "grade": grade,
+        "date": get_uz_time_str(),
+        "total": total,
+        "score": score,
+        "percentage": pct,
+        "grade": grade,
     })
+    # Maksimal 100 ta natija saqlash
+    if len(data["results"]) > 100:
+        data["results"] = data["results"][-100:]
+
+    save_user(uid)
 
     await clean_chat(uid, chat_id)
     msg = await bot.send_message(
-        chat_id, text, parse_mode="HTML",
+        chat_id,
+        text,
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="🔄 Qayta urinish", callback_data="retry_poll"),
@@ -1281,9 +1445,11 @@ async def show_results(chat_id, uid, stopped=False):
 @dp.callback_query(F.data == "retry_poll")
 async def retry_poll(callback: CallbackQuery, state: FSMContext):
     uid = callback.from_user.id
-    data = users.get(uid)
+    key = str(uid)
+    data = users.get(key)
+
     if not data or "selected_questions" not in data:
-        await callback.answer("❌ Ma'lumot topilmadi", show_alert=True)
+        await callback.answer("❌ Ma'lumot topilmadi. Yangi fayl yuklang.", show_alert=True)
         return
 
     selected = copy.deepcopy(data["selected_questions"])
@@ -1293,10 +1459,16 @@ async def retry_poll(callback: CallbackQuery, state: FSMContext):
 
     data.update({
         "selected_questions": selected,
-        "current_index": 0, "score": 0, "answers": [],
-        "poll_ids": [], "waiting_for_skip": False,
+        "current_index": 0,
+        "score": 0,
+        "answers": [],
+        "poll_ids": [],
+        "waiting_for_skip": False,
         "current_answer_recorded": False,
-        "test_start_time": get_uz_time(),
+        "current_poll_message_id": None,
+        "current_poll_id": None,
+        "current_question_index": 0,
+        "test_start_time": get_uz_time_str(),
     })
     await state.set_state(TestStates.testing)
     await clean_chat(uid, callback.message.chat.id)
@@ -1308,7 +1480,7 @@ async def retry_poll(callback: CallbackQuery, state: FSMContext):
         parse_mode="HTML",
     )
     await add_msg(uid, msg.message_id)
-    await asyncio.sleep(2)
+    await asyncio.sleep(1)
     await clean_chat(uid, callback.message.chat.id)
     await send_poll(callback.message.chat.id, uid)
     await callback.answer("✅ Boshlandi")
@@ -1317,7 +1489,8 @@ async def retry_poll(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "poll_details")
 async def poll_details(callback: CallbackQuery):
     uid = callback.from_user.id
-    answers = users.get(uid, {}).get("answers", [])
+    answers = users.get(str(uid), {}).get("answers", [])
+
     if not answers:
         await callback.answer("❌ Javoblar yo'q", show_alert=True)
         return
@@ -1330,20 +1503,25 @@ async def poll_details(callback: CallbackQuery):
         if not a["is_correct"]:
             text += f"   ✅ To'g'ri: {a['correct_answer']}\n"
         text += "\n"
+
+        # Xabar 3500 belgidan oshsa, bo'lib yuborish
         if len(text) > 3500:
             msg = await callback.message.answer(text, parse_mode="HTML")
             await add_msg(uid, msg.message_id)
             text = ""
+
     if text:
         msg = await callback.message.answer(text, parse_mode="HTML")
         await add_msg(uid, msg.message_id)
+
     await callback.answer()
 
 
 @dp.callback_query(F.data == "all_results")
-async def all_results(callback: CallbackQuery):
+async def all_results_cb(callback: CallbackQuery):
     uid = callback.from_user.id
-    results = users.get(uid, {}).get("results", [])
+    results = users.get(str(uid), {}).get("results", [])
+
     if not results:
         await callback.answer("❌ Natijalar yo'q", show_alert=True)
         return
@@ -1401,10 +1579,11 @@ async def cancel_test(callback: CallbackQuery, state: FSMContext):
 
 async def main():
     print("🚀 Bot ishga tushdi...")
-    print(f"📍 Vaqt: UTC+5 (O'zbekiston)")
+    print(f"📍 Vaqt zonasi: UTC+5 (O'zbekiston)")
     cleanup_old_files()
     await start_web()
-    await dp.start_polling(bot)
+    print("✅ Polling boshlandi...")
+    await dp.start_polling(bot, allowed_updates=["message", "callback_query", "poll_answer"])
 
 
 if __name__ == "__main__":
