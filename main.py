@@ -24,7 +24,7 @@ try:
 except ImportError:
     pass
 
-TOKEN = os.getenv("BOT_TOKEN", "8964353995:AAFgRTesY5nYBku_fyuFMNLQ2VW_hPMzOrg")
+TOKEN = os.getenv("BOT_TOKEN", "8964353995:AAH9Kg2OVFAWq0tMI5BbBpiIGau-EV2nTow")
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
