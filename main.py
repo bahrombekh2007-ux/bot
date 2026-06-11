@@ -427,7 +427,7 @@ def poll_kb():
 
 async def serve_webapp(request):
     try:
-        with open("webapp/index.html", "r", encoding="utf-8") as f:
+        with open("index.html", "r", encoding="utf-8") as f:
             return web.Response(text=f.read(), content_type="text/html")
     except FileNotFoundError:
         return web.Response(text="Web App topilmadi", status=404)
@@ -440,10 +440,8 @@ async def health(request):
 
 async def start_web():
     app = web.Application()
-    app.router.add_get("/", health)
+    app.router.add_get("/", serve_webapp)
     app.router.add_get("/health", health)
-    app.router.add_get("/webapp", serve_webapp)
-    app.router.add_get("/webapp/", serve_webapp)
 
     runner = web.AppRunner(app)
     await runner.setup()
