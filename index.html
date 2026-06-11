@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Test Master</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+/* ── TOKENS ─────────────────────────────────────────── */
+:root{
+  --bg:        #0d0d14;
+  --surface:   #151520;
+  --raised:    #1c1c2e;
+  --border:    rgba(255,255,255,.07);
+  --accent:    #00e5a0;
+  --accent2:   #00b8ff;
+  --danger:    #ff4d6d;
+  --warn:      #ffb800;
+  --text:      #f0f4ff;
+  --sub:       #7b8ab8;
+  --r-sm:      10px;
+  --r-md:      16px;
+  --r-lg:      22px;
+}
+
+/* ── RESET ───────────────────────────────────────────── */
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif;
+  background:var(--bg); color:var(--text);
+  min-height:100vh; overflow-x:hidden;
+  padding-bottom:env(safe-area-inset-bottom,16px);
+}
+
+/* ── SCREENS ─────────────────────────────────────────── */
+.scr{display:none;min-height:100vh;flex-direction:column}
+.scr.on{display:flex;animation:up .22s ease}
+@keyframes up{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+
+/* ── TOPBAR ──────────────────────────────────────────── */
+.topbar{
+  display:flex;align-items:center;gap:12px;
+  padding:14px 16px 10px;
+  position:sticky;top:0;z-index:9;
+  background:var(--bg);
+  border-bottom:1px solid var(--border);
+}
+.topbar-back{
+  width:34px;height:34px;border-radius:50%;
+  background:var(--raised);border:none;
+  color:var(--text);font-size:1.1rem;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;
+}
+.topbar h2{font-size:1rem;font-weight:600}
+
+/* ── BODY AREA ───────────────────────────────────────── */
+.body{padding:16px;flex:1;display:flex;flex-direction:column;gap:14px}
+
+/* ── SURFACE ─────────────────────────────────────────── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:16px}
+.card.raised{background:var(--raised)}
+
+/* ── HERO ────────────────────────────────────────────── */
+.hero{
+  padding:22px 16px 16px;
+  background:linear-gradient(145deg,#0d1f2f 0%,var(--surface) 100%);
+  border-radius:var(--r-lg);
+  border:1px solid rgba(0,229,160,.12);
+  position:relative;overflow:hidden;
+}
+.hero::before{
+  content:'';position:absolute;top:-40px;right:-40px;
+  width:160px;height:160px;border-radius:50%;
+  background:radial-gradient(circle,rgba(0,229,160,.15),transparent 70%);
+  pointer-events:none;
+}
+.hero-name{font-size:.78rem;color:var(--sub);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.hero-title{font-size:1.5rem;font-weight:800;line-height:1.2;margin-bottom:12px}
+.hero-title span{
+  background:linear-gradient(90deg,var(--accent),var(--accent2));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text
+}
+
+/* ── STATS ROW ───────────────────────────────────────── */
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat{
+  background:var(--raised);border:1px solid var(--border);
+  border-radius:var(--r-sm);padding:10px 8px;text-align:center;
+}
+.stat .v{font-size:1.25rem;font-weight:700;color:var(--accent)}
+.stat .l{font-size:.7rem;color:var(--sub);margin-top:2px}
+
+/* ── BUTTONS ─────────────────────────────────────────── */
+.btn{
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  width:100%;padding:14px;border:none;border-radius:var(--r-sm);
+  font-size:.95rem;font-weight:600;cursor:pointer;
+  transition:transform .15s,opacity .15s;
+}
+.btn:active{transform:scale(.97);opacity:.9}
+.btn-primary{
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  color:#0d0d14;
+}
+.btn-ghost{
+  background:transparent;
+  border:1px solid var(--border);
+  color:var(--text);
+}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-sm{padding:9px 14px;font-size:.82rem;width:auto;border-radius:8px}
+
+/* ── SECONDARY ACTIONS ───────────────────────────────── */
+.action-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.action-card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r-md);padding:14px;cursor:pointer;
+  display:flex;flex-direction:column;gap:6px;
+  transition:border-color .2s;
+}
+.action-card:active{border-color:var(--accent)}
+.action-card .ac-icon{font-size:1.4rem}
+.action-card .ac-label{font-size:.85rem;font-weight:600}
+.action-card .ac-sub{font-size:.72rem;color:var(--sub)}
+
+/* ── UPLOAD ──────────────────────────────────────────── */
+.upload-zone{
+  border:2px dashed rgba(0,229,160,.25);
+  border-radius:var(--r-md);padding:36px 16px;
+  text-align:center;cursor:pointer;
+  background:rgba(0,229,160,.03);
+  transition:all .2s;
+}
+.upload-zone.drag{border-color:var(--accent);background:rgba(0,229,160,.08)}
+.upload-zone .uz-icon{font-size:2.2rem;margin-bottom:10px}
+.upload-zone strong{display:block;margin-bottom:4px}
+.upload-zone p{font-size:.8rem;color:var(--sub)}
+#fileinput{display:none}
+
+/* ── STATUS BOX ──────────────────────────────────────── */
+.status-box{
+  border-radius:var(--r-md);padding:16px;
+  background:var(--raised);border:1px solid var(--border);
+  text-align:center;
+}
+
+/* ── FORMAT HINTS ────────────────────────────────────── */
+.fmt-tabs{display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:2px}
+.fmt-tab{
+  padding:5px 12px;background:var(--raised);border:1px solid var(--border);
+  border-radius:99px;font-size:.76rem;cursor:pointer;white-space:nowrap;
+  transition:all .15s;
+}
+.fmt-tab.act{background:var(--accent);border-color:var(--accent);color:#0d0d14;font-weight:600}
+.fmt-pane{display:none;background:var(--raised);border-radius:var(--r-sm);padding:12px}
+.fmt-pane.act{display:block}
+.fmt-pane code{font-size:.78rem;line-height:1.7;color:var(--accent2);font-family:'Courier New',monospace}
+
+/* ── COUNT GRID ──────────────────────────────────────── */
+.count-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.cnt-btn{
+  padding:12px 6px;text-align:center;
+  background:var(--raised);border:2px solid transparent;
+  border-radius:var(--r-sm);cursor:pointer;
+  font-size:.88rem;font-weight:600;
+  transition:all .15s;
+}
+.cnt-btn:hover,.cnt-btn.sel{border-color:var(--accent);background:rgba(0,229,160,.1);color:var(--accent)}
+.cnt-input{
+  width:100%;padding:12px 14px;
+  background:var(--raised);border:1px solid var(--border);
+  border-radius:var(--r-sm);color:var(--text);font-size:.95rem;
+  outline:none;transition:border-color .2s;
+}
+.cnt-input:focus{border-color:var(--accent)}
+
+/* ── TEST SCREEN ─────────────────────────────────────── */
+.test-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 16px;
+  background:var(--surface);
+  border-bottom:1px solid var(--border);
+  gap:12px;
+  position:sticky;top:0;z-index:9;
+}
+.test-badges{display:flex;gap:8px;align-items:center}
+.badge{
+  padding:4px 10px;border-radius:99px;
+  font-size:.75rem;font-weight:700;
+}
+.badge-q{background:rgba(0,184,255,.15);color:var(--accent2)}
+.badge-s{background:rgba(0,229,160,.15);color:var(--accent)}
+
+/* Progress ring — signature element */
+.ring-wrap{
+  position:relative;width:48px;height:48px;flex-shrink:0;
+}
+.ring-wrap svg{position:absolute;inset:0;transform:rotate(-90deg)}
+.ring-bg{stroke:var(--raised);stroke-width:4;fill:none}
+.ring-fg{stroke:var(--accent);stroke-width:4;fill:none;stroke-linecap:round;transition:stroke-dashoffset .5s ease}
+.ring-label{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:.6rem;font-weight:700;color:var(--accent);
+}
+
+.q-text{
+  font-size:1rem;font-weight:600;line-height:1.55;
+  padding:16px;margin:0 0 4px;
+  background:var(--raised);
+  border-left:3px solid var(--accent);
+  border-radius:0 var(--r-sm) var(--r-sm) 0;
+}
+.options{display:flex;flex-direction:column;gap:9px}
+.opt{
+  display:flex;align-items:center;gap:12px;
+  padding:13px 14px;
+  background:var(--raised);border:2px solid transparent;
+  border-radius:var(--r-sm);cursor:pointer;
+  font-size:.9rem;transition:all .18s;
+}
+.opt:active{transform:scale(.98)}
+.opt:hover:not(.disabled){border-color:rgba(0,229,160,.3);background:rgba(0,229,160,.06)}
+.opt-letter{
+  min-width:26px;height:26px;border-radius:50%;
+  background:rgba(255,255,255,.08);color:var(--text);
+  display:flex;align-items:center;justify-content:center;
+  font-size:.72rem;font-weight:700;flex-shrink:0;
+}
+.opt.sel{border-color:rgba(0,184,255,.5);background:rgba(0,184,255,.1)}
+.opt.correct{border-color:var(--accent)!important;background:rgba(0,229,160,.12)!important}
+.opt.correct .opt-letter{background:var(--accent);color:#0d0d14}
+.opt.wrong{border-color:var(--danger)!important;background:rgba(255,77,109,.1)!important}
+.opt.wrong .opt-letter{background:var(--danger);color:#fff}
+.opt.disabled{cursor:default;pointer-events:none}
+
+.test-actions{
+  display:flex;gap:10px;padding:14px 16px;
+  border-top:1px solid var(--border);
+  background:var(--bg);
+  position:sticky;bottom:0;
+}
+
+/* ── RESULT ──────────────────────────────────────────── */
+.result-top{
+  padding:28px 16px 20px;
+  background:linear-gradient(145deg,#0d2017,var(--surface));
+  border-radius:var(--r-lg);
+  border:1px solid rgba(0,229,160,.15);
+  text-align:center;
+  position:relative;overflow:hidden;
+}
+.result-top::before{
+  content:'';position:absolute;bottom:-30px;left:50%;transform:translateX(-50%);
+  width:200px;height:200px;border-radius:50%;
+  background:radial-gradient(circle,rgba(0,229,160,.12),transparent 70%);
+  pointer-events:none;
+}
+.result-emoji{font-size:3rem;margin-bottom:8px}
+.result-grade{font-size:1.4rem;font-weight:800;margin-bottom:4px}
+.result-pct{
+  font-size:3.2rem;font-weight:800;
+  background:linear-gradient(90deg,var(--accent),var(--accent2));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+  margin:8px 0;
+}
+.result-bar{
+  height:6px;background:var(--raised);border-radius:99px;
+  overflow:hidden;margin:12px 0 0;
+}
+.result-bar-fill{
+  height:100%;border-radius:99px;
+  background:linear-gradient(90deg,var(--accent),var(--accent2));
+  transition:width .8s ease;
+}
+
+.result-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.rs-cell{
+  background:var(--raised);border:1px solid var(--border);
+  border-radius:var(--r-sm);padding:10px 8px;text-align:center;
+}
+.rs-cell .rv{font-size:1.3rem;font-weight:700}
+.rs-cell .rl{font-size:.7rem;color:var(--sub);margin-top:2px}
+.rv.green{color:var(--accent)}
+.rv.red{color:var(--danger)}
+.rv.yellow{color:var(--warn)}
+
+/* ── ANSWERS LIST ────────────────────────────────────── */
+.ans-item{
+  padding:10px 12px;border-radius:var(--r-sm);margin-bottom:6px;
+  font-size:.82rem;
+}
+.ans-item.ok{background:rgba(0,229,160,.08);border-left:2px solid var(--accent)}
+.ans-item.bad{background:rgba(255,77,109,.08);border-left:2px solid var(--danger)}
+.ans-q{font-weight:600;margin-bottom:3px;color:var(--text)}
+.ans-a{color:var(--sub)}
+
+/* ── HISTORY ─────────────────────────────────────────── */
+.hist-item{
+  background:var(--raised);border:1px solid var(--border);
+  border-radius:var(--r-sm);padding:12px 14px;margin-bottom:8px;
+}
+.hist-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.hist-grade{font-weight:600;font-size:.9rem}
+.hist-pct{font-size:1.1rem;font-weight:800}
+.hist-bar{height:4px;background:var(--border);border-radius:99px;overflow:hidden;margin-bottom:6px}
+.hist-bar-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+.hist-meta{font-size:.72rem;color:var(--sub)}
+
+/* ── MISC ─────────────────────────────────────────────── */
+.sep{height:1px;background:var(--border);margin:4px 0}
+.label{font-size:.72rem;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.06em}
+.empty{text-align:center;padding:48px 16px;color:var(--sub)}
+.empty .ei{font-size:2.8rem;margin-bottom:12px}
+.spinner{
+  width:32px;height:32px;border-radius:50%;
+  border:3px solid var(--raised);border-top-color:var(--accent);
+  animation:spin .65s linear infinite;margin:0 auto;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.toast{
+  position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(80px);
+  background:var(--raised);border:1px solid var(--border);
+  padding:10px 20px;border-radius:99px;font-size:.85rem;font-weight:500;
+  transition:transform .28s;z-index:99;box-shadow:0 8px 32px rgba(0,0,0,.5);
+  max-width:88vw;text-align:center;pointer-events:none;
+}
+.toast.show{transform:translateX(-50%) translateY(0)}
+
+/* no-scroll when needed */
+.noscroll{overflow:hidden}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════ HOME ═══════════════════════ -->
+<div id="s-home" class="scr on">
+  <div class="body">
+    <div class="hero">
+      <div class="hero-name" id="userName">Test Master</div>
+      <div class="hero-title">Bilimingizni<br><span>sinab ko'ring</span></div>
+      <button class="btn btn-primary" onclick="go('upload')" style="max-width:220px">
+        📎 Fayl yuklash
+      </button>
+    </div>
+
+    <div class="stats" id="homeStats">
+      <div class="stat"><div class="v" id="hs-tests">0</div><div class="l">Testlar</div></div>
+      <div class="stat"><div class="v" id="hs-correct">0</div><div class="l">To'g'ri</div></div>
+      <div class="stat"><div class="v" id="hs-avg">—</div><div class="l">O'rtacha</div></div>
+    </div>
+
+    <div class="action-row">
+      <div class="action-card" onclick="go('files')">
+        <div class="ac-icon">📁</div>
+        <div class="ac-label">Fayllarim</div>
+        <div class="ac-sub" id="filesCount">0 ta saqlangan</div>
+      </div>
+      <div class="action-card" onclick="go('history')">
+        <div class="ac-icon">📊</div>
+        <div class="ac-label">Natijalar</div>
+        <div class="ac-sub" id="histCount">0 ta natija</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════ UPLOAD ═══════════════════════ -->
+<div id="s-upload" class="scr">
+  <div class="topbar">
+    <button class="topbar-back" onclick="go('home')">←</button>
+    <h2>Fayl yuklash</h2>
+  </div>
+  <div class="body">
+    <div class="upload-zone" id="dropZone" onclick="document.getElementById('fileinput').click()">
+      <div class="uz-icon">📎</div>
+      <strong>Fayl tanlash</strong>
+      <p style="margin-top:4px">Yoki shu yerga tashlang</p>
+      <p style="margin-top:8px;font-size:.72rem">.txt · .docx · .xlsx · .pdf</p>
+      <input type="file" id="fileinput" accept=".txt,.docx,.doc,.xlsx,.pdf" onchange="onFileSelect(this)">
+    </div>
+
+    <div id="upStatus" style="display:none"></div>
+
+    <div class="card">
+      <div class="label" style="margin-bottom:10px">Format yo'riqnomasi</div>
+      <div class="fmt-tabs">
+        <div class="fmt-tab act" onclick="showFmt(0,this)">TXT #</div>
+        <div class="fmt-tab" onclick="showFmt(1,this)">TXT A/B/C/D</div>
+        <div class="fmt-tab" onclick="showFmt(2,this)">DOCX/XLSX</div>
+      </div>
+      <div id="fmt0" class="fmt-pane act">
+        <code># Savol matni<br>+ To'g'ri javob<br>- Noto'g'ri 1<br>- Noto'g'ri 2<br>- Noto'g'ri 3</code>
+      </div>
+      <div id="fmt1" class="fmt-pane">
+        <code>1. Savol matni<br>A) To'g'ri<br>B) Noto'g'ri 1<br>C) Noto'g'ri 2<br>D) Noto'g'ri 3<br>Javob: A</code>
+      </div>
+      <div id="fmt2" class="fmt-pane">
+        <code>5 ustunli jadval:<br>Savol | A | B | C | D<br><br>Birinchi variant —<br>to'g'ri javob</code>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════ COUNT ═══════════════════════ -->
+<div id="s-count" class="scr">
+  <div class="topbar">
+    <button class="topbar-back" onclick="go('upload')">←</button>
+    <h2>Test sonini tanlang</h2>
+  </div>
+  <div class="body">
+    <div class="card" style="text-align:center">
+      <div style="font-size:2.2rem;font-weight:800;color:var(--accent)" id="cntTotal">0</div>
+      <div style="color:var(--sub);font-size:.82rem;margin-top:2px">mavjud savol</div>
+      <div style="color:var(--sub);font-size:.75rem;margin-top:4px" id="cntFile"></div>
+    </div>
+
+    <div>
+      <div class="label" style="margin-bottom:8px">Tezkor tanlov</div>
+      <div class="count-grid" id="cntGrid"></div>
+    </div>
+
+    <div class="sep"></div>
+
+    <div>
+      <div class="label" style="margin-bottom:8px">O'zim kiritaman</div>
+      <input type="number" id="cntInput" class="cnt-input" placeholder="Masalan: 20" min="1">
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-ghost btn-sm" onclick="startRandom()" style="flex:1">🎲 Tasodifiy</button>
+        <button class="btn btn-primary btn-sm" onclick="startCustom()" style="flex:1">▶ Boshlash</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════ TEST ════════════════════════ -->
+<div id="s-test" class="scr">
+  <div class="test-header">
+    <div class="test-badges">
+      <span class="badge badge-q" id="tBadge">1/10</span>
+      <span class="badge badge-s" id="sBadge">✅ 0</span>
+    </div>
+    <!-- Signature: animated progress ring -->
+    <div class="ring-wrap">
+      <svg viewBox="0 0 48 48" width="48" height="48">
+        <circle class="ring-bg" cx="24" cy="24" r="20"/>
+        <circle class="ring-fg" id="ringFg" cx="24" cy="24" r="20"
+          stroke-dasharray="125.66" stroke-dashoffset="125.66"/>
+      </svg>
+      <div class="ring-label" id="ringLabel">0%</div>
+    </div>
+    <button class="btn btn-danger btn-sm" style="padding:7px 12px" onclick="confirmEnd()">⏹</button>
+  </div>
+
+  <div class="body" style="gap:12px;padding-top:14px">
+    <div class="q-text" id="qText">…</div>
+    <div class="options" id="optsCont"></div>
+  </div>
+
+  <div class="test-actions">
+    <button class="btn btn-ghost" style="flex:1;padding:12px" onclick="showHint()">💡 Javob</button>
+    <button class="btn btn-primary" style="flex:1;padding:12px" id="nextBtn" onclick="next()" disabled>⏭ Keyingi</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════ RESULT ══════════════════════ -->
+<div id="s-result" class="scr">
+  <div class="body">
+    <div class="result-top">
+      <div class="result-emoji" id="rEmoji">🎉</div>
+      <div class="result-grade" id="rGrade">Yaxshi</div>
+      <div class="result-pct" id="rPct">0%</div>
+      <div class="result-bar"><div class="result-bar-fill" id="rBarFill" style="width:0%"></div></div>
+    </div>
+
+    <div class="result-stats">
+      <div class="rs-cell"><div class="rv green" id="rCorrect">0</div><div class="rl">✅ To'g'ri</div></div>
+      <div class="rs-cell"><div class="rv red" id="rWrong">0</div><div class="rl">❌ Noto'g'ri</div></div>
+      <div class="rs-cell"><div class="rv yellow" id="rTime">0s</div><div class="rl">⏱ Vaqt</div></div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:9px">
+      <button class="btn btn-primary" onclick="retry()">🔄 Qayta urinish</button>
+      <button class="btn btn-ghost" onclick="toggleDetails()">📋 Batafsil javoblar</button>
+      <button class="btn btn-ghost" onclick="go('home')">🏠 Bosh sahifa</button>
+    </div>
+
+    <div id="detailsWrap" style="display:none">
+      <div class="label" style="margin-bottom:8px">Har bir savol</div>
+      <div id="ansList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════ FILES ═══════════════════════ -->
+<div id="s-files" class="scr">
+  <div class="topbar">
+    <button class="topbar-back" onclick="go('home')">←</button>
+    <h2>📁 Fayllarim</h2>
+  </div>
+  <div class="body" id="filesBody"></div>
+</div>
+
+<!-- ═══════════════════════ HISTORY ═════════════════════ -->
+<div id="s-history" class="scr">
+  <div class="topbar">
+    <button class="topbar-back" onclick="go('home')">←</button>
+    <h2>📊 Natijalar tarixi</h2>
+  </div>
+  <div class="body" id="histBody"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ────────────────────────────────────────────────
+// TG INIT
+// ────────────────────────────────────────────────
+const tg = window.Telegram?.WebApp;
+if(tg){ tg.ready(); tg.expand(); }
+
+const USER_ID   = tg?.initDataUnsafe?.user?.id   || 'guest';
+const USER_NAME = tg?.initDataUnsafe?.user?.first_name || 'Foydalanuvchi';
+document.getElementById('userName').textContent = `👋 Salom, ${USER_NAME}!`;
+
+// ────────────────────────────────────────────────
+// STORE
+// ────────────────────────────────────────────────
+const SK = `tm_${USER_ID}`;
+
+let db = { files:[], results:[] };
+function loadDb(){
+  try{ const r=localStorage.getItem(SK); if(r) db=JSON.parse(r); }catch{}
+}
+function saveDb(){
+  db.files=db.files.slice(-20);
+  db.results=db.results.slice(-100);
+  try{ localStorage.setItem(SK,JSON.stringify(db)); }catch{}
+}
+loadDb();
+
+// ────────────────────────────────────────────────
+// NAV
+// ────────────────────────────────────────────────
+function go(name){
+  document.querySelectorAll('.scr').forEach(s=>s.classList.remove('on'));
+  document.getElementById('s-'+name).classList.add('on');
+  if(name==='home')   renderHome();
+  if(name==='files')  renderFiles();
+  if(name==='history')renderHistory();
+  if(tg){
+    if(name==='home') tg.BackButton.hide();
+    else{
+      tg.BackButton.show();
+      tg.BackButton.offClick(); // clear prev
+      tg.BackButton.onClick(()=>{
+        if(name==='test'){ confirmEnd(); }else{ go('home'); }
+      });
+    }
+  }
+}
+
+// ────────────────────────────────────────────────
+// HOME
+// ────────────────────────────────────────────────
+function renderHome(){
+  const res=db.results;
+  const avg=res.length ? res.reduce((a,r)=>a+r.pct,0)/res.length : 0;
+  const tot=res.reduce((a,r)=>a+r.score,0);
+  document.getElementById('hs-tests').textContent=res.length;
+  document.getElementById('hs-correct').textContent=tot;
+  document.getElementById('hs-avg').textContent=res.length ? avg.toFixed(0)+'%' : '—';
+  document.getElementById('filesCount').textContent=`${db.files.length} ta saqlangan`;
+  document.getElementById('histCount').textContent=`${res.length} ta natija`;
+}
+renderHome();
+
+// ────────────────────────────────────────────────
+// FORMAT TABS
+// ────────────────────────────────────────────────
+function showFmt(i,el){
+  document.querySelectorAll('.fmt-tab').forEach(t=>t.classList.remove('act'));
+  document.querySelectorAll('.fmt-pane').forEach(p=>p.classList.remove('act'));
+  el.classList.add('act');
+  document.getElementById('fmt'+i).classList.add('act');
+}
+
+// ────────────────────────────────────────────────
+// DRAG DROP
+// ────────────────────────────────────────────────
+const dz=document.getElementById('dropZone');
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag')});
+dz.addEventListener('dragleave',()=>dz.classList.remove('drag'));
+dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag');if(e.dataTransfer.files[0])process(e.dataTransfer.files[0])});
+function onFileSelect(inp){if(inp.files[0])process(inp.files[0])}
+
+// ────────────────────────────────────────────────
+// FILE PROCESSING
+// ────────────────────────────────────────────────
+async function process(file){
+  const box=document.getElementById('upStatus');
+  box.style.display='block';
+  box.innerHTML=`<div class="status-box"><div class="spinner" style="margin-bottom:12px"></div><div style="color:var(--sub);font-size:.85rem">Tahlil qilinmoqda...</div></div>`;
+
+  const name=file.name.toLowerCase();
+  let qs=[];
+  try{
+    if(name.endsWith('.txt')){
+      const txt=await readText(file);
+      qs=parseTxt(txt);
+    }else if(name.endsWith('.docx')||name.endsWith('.doc')){
+      qs=await parseDocx(file);
+    }else if(name.endsWith('.xlsx')||name.endsWith('.xls')){
+      qs=await parseXlsx(file);
+    }else if(name.endsWith('.pdf')){
+      box.innerHTML=`<div class="status-box" style="color:var(--warn)">⚠️ PDF to'liq qo'llanmaydi.<br><span style="font-size:.8rem;color:var(--sub)">Telegram botga .pdf yuboring</span></div>`;
+      return;
+    }else{
+      box.innerHTML=`<div class="status-box" style="color:var(--danger)">❌ Ushbu format qo'llanmaydi</div>`;
+      return;
+    }
+
+    if(!qs.length){
+      box.innerHTML=`<div class="status-box" style="color:var(--danger)">❌ Savol topilmadi.<br><span style="font-size:.8rem;color:var(--sub)">Fayl formatini tekshiring</span></div>`;
+      return;
+    }
+
+    // Save
+    const rec={name:file.name,count:qs.length,date:new Date().toLocaleDateString('uz'),questions:qs};
+    const ei=db.files.findIndex(f=>f.name===file.name);
+    if(ei>=0) db.files[ei]=rec; else db.files.push(rec);
+    saveDb(); renderHome();
+
+    A.questions=qs;
+    A.currentFile=rec;
+
+    box.innerHTML=`
+      <div class="status-box">
+        <div style="font-size:1.8rem;margin-bottom:8px">✅</div>
+        <div style="font-weight:700;margin-bottom:4px">${file.name}</div>
+        <div style="color:var(--accent);font-size:1.3rem;font-weight:800;margin-bottom:14px">${qs.length} ta savol</div>
+        <button class="btn btn-primary" onclick="openCount()">▶ Test boshlash</button>
+      </div>`;
+    toast(`✅ ${qs.length} ta savol yuklandi`);
+    if(tg) tg.HapticFeedback.impactOccurred('medium');
+  }catch(e){
+    box.innerHTML=`<div class="status-box" style="color:var(--danger)">❌ ${e.message}</div>`;
+  }
+}
+
+function readText(file){
+  return new Promise((res,rej)=>{const r=new FileReader();r.onload=e=>res(e.target.result);r.onerror=()=>rej(new Error("O'qilmadi"));r.readAsText(file,'utf-8')});
+}
+function readBuf(file){
+  return new Promise((res,rej)=>{const r=new FileReader();r.onload=e=>res(e.target.result);r.onerror=()=>rej(new Error("O'qilmadi"));r.readAsArrayBuffer(file)});
+}
+
+// ────────────────────────────────────────────────
+// PARSERS
+// ────────────────────────────────────────────────
+function parseTxt(content){
+  const lines=content.split('\n');
+  const ne=lines.map(l=>l.trim()).filter(Boolean);
+  const hasH=ne.some(l=>l.startsWith('#'));
+  const hasP=ne.some(l=>l.startsWith('+'));
+  const hasPipe=ne.some(l=>l.split('|').length>=5);
+  const hasNum=ne.some(l=>/^\d+[.)]\s/.test(l));
+  const hasABCD=ne.some(l=>/^[A-Da-d][.)]\s/.test(l));
+  if(hasH&&hasP){const r=parseHash(lines);if(r.length)return r;}
+  if(hasNum&&hasABCD){const r=parseABCD(lines);if(r.length)return r;}
+  if(hasPipe){const r=parsePipe(ne);if(r.length)return r;}
+  for(const fn of[parseHash,parseABCD]){const r=fn(lines);if(r.length)return r;}
+  return parsePipe(ne);
+}
+
+function parseHash(lines){
+  const qs=[];let q=null,correct=null,opts=[],st='idle';
+  function flush(){
+    if(q&&correct&&opts.length>=2){
+      let o=opts.slice(0,4);
+      while(o.length<4)o.push(`Variant ${o.length+1}`);
+      if(!o.includes(correct)){o.unshift(correct);o=o.slice(0,4);}
+      qs.push({question:q,options:o,answer:correct});
+    }
+    q=null;correct=null;opts=[];st='idle';
+  }
+  for(const raw of lines){
+    const l=raw.trim();if(!l)continue;
+    if(l.startsWith('#')||l.startsWith('?')){
+      flush();
+      const qv=l.slice(1).trim().replace(/\s*\?$/,'').trim();
+      if(qv){q=qv;}else st='need_q';
+    }else if(st==='need_q'){q=l.replace(/\s*\?$/,'').trim();st='idle';}
+    else if(l.startsWith('+')){
+      const a=l.slice(1).trim();
+      if(!a)st='need_correct';
+      else if(q){correct=a;if(!opts.includes(a))opts.push(a);st='idle';}
+    }else if(st==='need_correct'){correct=l;if(!opts.includes(l))opts.push(l);st='idle';}
+    else if(l.startsWith('-')){const a=l.slice(1).trim();if(q&&a&&!opts.includes(a))opts.push(a);}
+  }
+  flush();return qs;
+}
+
+function parseABCD(lines){
+  const qs=[];let q=null,od={},cl=null;
+  function flush(){
+    if(q&&Object.keys(od).length&&cl){
+      const ul=cl.toUpperCase();
+      if(od[ul]){
+        const ans=od[ul];
+        let opts=Object.values(od).slice(0,4);
+        while(opts.length<4)opts.push(`Variant ${opts.length+1}`);
+        qs.push({question:q,options:opts,answer:ans});
+      }
+    }
+    q=null;od={};cl=null;
+  }
+  for(const raw of lines){
+    const l=raw.trim();if(!l)continue;
+    let m=l.match(/^(\d+)[.)]\s+(.+)$/);if(m){flush();q=m[2].trim();continue;}
+    m=l.match(/^([A-Da-d])[.)]\s+(.+)$/);if(m){od[m[1].toUpperCase()]=m[2].trim();continue;}
+    m=l.match(/^(?:Javob|To'g'ri\s*javob|Answer|Ans)[:\s]*([A-Da-d])/i);if(m)cl=m[1].toUpperCase();
+  }
+  flush();return qs;
+}
+
+function parsePipe(lines){
+  return lines.filter(l=>l.split('|').length>=5).map(l=>{
+    const p=l.split('|').map(x=>x.trim());
+    return{question:p[0],options:p.slice(1,5),answer:p[1]};
+  }).filter(q=>q.question);
+}
+
+async function parseDocx(file){
+  if(!window.JSZip){
+    await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js');
+  }
+  const buf=await readBuf(file);
+  const zip=await JSZip.loadAsync(buf);
+  const xmlStr=await zip.file('word/document.xml').async('string');
+  const doc=new DOMParser().parseFromString(xmlStr,'application/xml');
+  const qs=[];
+  for(const row of doc.querySelectorAll('tr')){
+    const cells=[...new Set([...row.querySelectorAll('tc')].map(tc=>tc.textContent.trim()).filter(Boolean))];
+    if(cells.length>=5) qs.push({question:cells[0],options:cells.slice(1,5),answer:cells[1]});
+  }
+  if(!qs.length){
+    const paras=[...doc.querySelectorAll('p')].map(p=>p.textContent.trim()).filter(Boolean);
+    return parseHash(paras)||parseABCD(paras)||[];
+  }
+  return qs;
+}
+
+async function parseXlsx(file){
+  if(!window.XLSX){
+    await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
+  }
+  const buf=await readBuf(file);
+  const wb=XLSX.read(buf,{type:'array'});
+  const qs=[];
+  for(const sn of wb.SheetNames){
+    const ws=wb.Sheets[sn];
+    const data=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+    for(const row of data){
+      const cells=row.map(c=>String(c).trim()).filter(Boolean);
+      if(cells.length>=5) qs.push({question:cells[0],options:cells.slice(1,5),answer:cells[1]});
+    }
+  }
+  return qs;
+}
+
+function loadScript(src){
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src=src;s.onload=res;s.onerror=rej;document.head.appendChild(s);
+  });
+}
+
+// ────────────────────────────────────────────────
+// COUNT SCREEN
+// ────────────────────────────────────────────────
+function openCount(){
+  const total=A.questions.length;
+  document.getElementById('cntTotal').textContent=total;
+  document.getElementById('cntFile').textContent=A.currentFile?.name||'';
+  document.getElementById('cntInput').max=total;
+
+  const presets=[5,10,15,20,25,30,40,50].filter(n=>n<=total);
+  if(!presets.includes(total)) presets.push(total);
+
+  document.getElementById('cntGrid').innerHTML=presets.map(n=>
+    `<div class="cnt-btn" onclick="startTest(${n})">${n===total?`📚 Hammasi (${n})`:`${n} ta`}</div>`
+  ).join('');
+
+  go('count');
+}
+
+function startCustom(){
+  const v=parseInt(document.getElementById('cntInput').value);
+  const t=A.questions.length;
+  if(!v||v<1||v>t){toast(`1 dan ${t} gacha kiriting`);return;}
+  startTest(v);
+}
+function startRandom(){
+  const t=A.questions.length;
+  const c=Math.floor(Math.random()*(Math.min(50,t)-Math.min(5,t)+1))+Math.min(5,t);
+  startTest(c);
+}
+
+// ────────────────────────────────────────────────
+// APP STATE
+// ────────────────────────────────────────────────
+const A={
+  questions:[],
+  selected:[],
+  idx:0,
+  score:0,
+  answers:[],
+  answered:false,
+  start:null,
+  totalTest:0,
+  currentFile:null,
+};
+
+function shuffle(arr){const a=[...arr];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+
+// ────────────────────────────────────────────────
+// TEST
+// ────────────────────────────────────────────────
+function startTest(count){
+  const pool=shuffle(A.questions).slice(0,count);
+  A.selected=pool.map(q=>({...q,options:shuffle(q.options)}));
+  A.idx=0;A.score=0;A.answers=[];A.answered=false;A.start=Date.now();A.totalTest=count;
+  go('test');
+  renderQ();
+}
+
+function renderQ(){
+  const i=A.idx;
+  const q=A.selected[i];
+  const total=A.selected.length;
+
+  document.getElementById('tBadge').textContent=`${i+1}/${total}`;
+  document.getElementById('sBadge').textContent=`✅ ${A.score}`;
+
+  // Ring
+  const pct=total>0?(i/total)*100:0;
+  const r=20, circ=2*Math.PI*r;
+  document.getElementById('ringFg').style.strokeDashoffset=circ-(pct/100)*circ;
+  document.getElementById('ringLabel').textContent=Math.round(pct)+'%';
+
+  document.getElementById('qText').textContent=q.question;
+
+  const lets=['A','B','C','D'];
+  document.getElementById('optsCont').innerHTML=q.options.map((o,i)=>
+    `<div class="opt" id="op${i}" onclick="pick(${i})">
+      <span class="opt-letter">${lets[i]}</span>
+      <span>${o}</span>
+    </div>`
+  ).join('');
+
+  document.getElementById('nextBtn').disabled=true;
+  A.answered=false;
+}
+
+function pick(idx){
+  if(A.answered) return;
+  A.answered=true;
+
+  const q=A.selected[A.idx];
+  const chosen=q.options[idx];
+  const ok=chosen===q.answer;
+  A.answers.push({question:q.question,userAnswer:chosen,correctAnswer:q.answer,ok});
+  if(ok) A.score++;
+
+  document.querySelectorAll('.opt').forEach((el,i)=>{
+    el.classList.add('disabled');
+    if(q.options[i]===q.answer) el.classList.add('correct');
+    else if(i===idx) el.classList.add('wrong');
+  });
+
+  document.getElementById('nextBtn').disabled=false;
+  if(tg) tg.HapticFeedback.impactOccurred(ok?'light':'rigid');
+}
+
+function showHint(){
+  if(A.answered){toast('✅ Allaqachon javob berildi');return;}
+  const q=A.selected[A.idx];
+  if(tg) tg.showAlert(`✅ To'g'ri javob:\n\n${q.answer}`);
+  else alert(`✅ To'g'ri javob:\n${q.answer}`);
+}
+
+function next(){
+  if(!A.answered){
+    const q=A.selected[A.idx];
+    A.answers.push({question:q.question,userAnswer:'O\'tkazildi',correctAnswer:q.answer,ok:false});
+  }
+  A.idx++;
+  if(A.idx>=A.selected.length){ finish(); }
+  else{ renderQ(); }
+}
+
+function confirmEnd(){
+  if(tg){
+    tg.showConfirm('Testni yakunlashni xohlaysizmi?',c=>{if(c)finish(true);});
+  }else{
+    if(confirm('Testni yakunlash?')) finish(true);
+  }
+}
+
+function finish(stopped=false){
+  const elapsed=Math.floor((Date.now()-A.start)/1000);
+  const total=A.totalTest;
+  const score=A.score;
+  const pct=total?(score/total*100):0;
+
+  let grade,emoji;
+  if(pct>=90){grade="A'lo";emoji='🏆';}
+  else if(pct>=75){grade='Yaxshi';emoji='🎉';}
+  else if(pct>=60){grade='Qoniqarli';emoji='👍';}
+  else{grade='Qoniqarsiz';emoji='📚';}
+
+  db.results.push({date:new Date().toLocaleDateString('uz'),total,score,pct,grade});
+  saveDb();renderHome();
+
+  document.getElementById('rEmoji').textContent=emoji;
+  document.getElementById('rGrade').textContent=grade+(stopped?' (to\'xtatildi)':'');
+  document.getElementById('rPct').textContent=pct.toFixed(0)+'%';
+  document.getElementById('rBarFill').style.width=pct+'%';
+  document.getElementById('rCorrect').textContent=score;
+  document.getElementById('rWrong').textContent=Math.max(0,total-score);
+  const m=Math.floor(elapsed/60),s=elapsed%60;
+  document.getElementById('rTime').textContent=m>0?`${m}m ${s}s`:`${s}s`;
+
+  document.getElementById('ansList').innerHTML=A.answers.map((a,i)=>`
+    <div class="ans-item ${a.ok?'ok':'bad'}">
+      <div class="ans-q">${i+1}. ${a.question.slice(0,70)}${a.question.length>70?'…':''}</div>
+      <div class="ans-a">${a.ok?'✅':'❌'} ${a.userAnswer}${!a.ok?` → ✅ ${a.correctAnswer}`:''}</div>
+    </div>
+  `).join('');
+  document.getElementById('detailsWrap').style.display='none';
+
+  go('result');
+  if(tg){
+    tg.HapticFeedback.notificationOccurred(pct>=60?'success':'warning');
+    try{
+      tg.sendData(JSON.stringify({action:'test_completed',score,total,pct,grade}));
+    }catch{}
+  }
+}
+
+function toggleDetails(){
+  const w=document.getElementById('detailsWrap');
+  w.style.display=w.style.display==='none'?'block':'none';
+}
+
+function retry(){startTest(A.selected.length);}
+
+// ────────────────────────────────────────────────
+// FILES
+// ────────────────────────────────────────────────
+function renderFiles(){
+  const b=document.getElementById('filesBody');
+  if(!db.files.length){
+    b.innerHTML=`<div class="empty"><div class="ei">📁</div><p>Hali fayl yuklanmagan</p><br><button class="btn btn-ghost" onclick="go('upload')">📎 Fayl yuklash</button></div>`;
+    return;
+  }
+  const icons={txt:'📝',docx:'📘',doc:'📘',xlsx:'📊',xls:'📊',pdf:'📄'};
+  b.innerHTML=[...db.files].reverse().map((f,ri)=>{
+    const idx=db.files.length-1-ri;
+    const ext=f.name.split('.').pop().toLowerCase();
+    return`<div class="hist-item" onclick="loadFile(${idx})" style="cursor:pointer">
+      <div class="hist-top">
+        <span>${icons[ext]||'📄'} <b>${f.name.slice(0,35)}</b></span>
+        <span style="color:var(--accent);font-size:.8rem">▶</span>
+      </div>
+      <div class="hist-meta">${f.count} ta savol · ${f.date}</div>
+    </div>`;
+  }).join('');
+}
+
+function loadFile(idx){
+  const f=db.files[idx];
+  if(!f||!f.questions){toast('❌ Fayl topilmadi');return;}
+  A.questions=f.questions;
+  A.currentFile=f;
+  openCount();
+}
+
+// ────────────────────────────────────────────────
+// HISTORY
+// ────────────────────────────────────────────────
+function renderHistory(){
+  const b=document.getElementById('histBody');
+  if(!db.results.length){
+    b.innerHTML=`<div class="empty"><div class="ei">📊</div><p>Hali natija yo'q</p></div>`;
+    return;
+  }
+  const c=p=>p>=90?'var(--accent)':p>=60?'var(--accent2)':'var(--danger)';
+  b.innerHTML=[...db.results].reverse().map(r=>`
+    <div class="hist-item">
+      <div class="hist-top">
+        <span class="hist-grade">${r.grade}</span>
+        <span class="hist-pct" style="color:${c(r.pct)}">${r.pct.toFixed(0)}%</span>
+      </div>
+      <div class="hist-bar"><div class="hist-bar-fill" style="width:${r.pct}%;background:${c(r.pct)}"></div></div>
+      <div class="hist-meta">✅ ${r.score}/${r.total} · ${r.date}</div>
+    </div>
+  `).join('');
+}
+
+// ────────────────────────────────────────────────
+// TOAST
+// ────────────────────────────────────────────────
+let toastTimer;
+function toast(msg,ms=2400){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>t.classList.remove('show'),ms);
+}
+</script>
+</body>
+</html>
