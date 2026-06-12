@@ -135,10 +135,6 @@ def main_kb():
                 text="🚀 Testni boshlash",
                 web_app=WebAppInfo(url=WEBAPP_URL)
             )],
-            [InlineKeyboardButton(
-        text="🚀 Testni boshlash",
-        web_app=WebAppInfo(url=WEBAPP_URL)
-            )],
             [
                 KeyboardButton(text="📊 Natijalarim"),
                 KeyboardButton(text="🆘 Yordam"),
