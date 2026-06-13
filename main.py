@@ -312,18 +312,31 @@ def parse_docx(path: str) -> list:
             questions.append({"question": q, "options": o, "answer": ans})
 
     for table in doc.tables:
+        # Har bir qatordan matnni yig'amiz (bo'sh qatorlarni tashlab)
         rows = []
         for row in table.rows:
-            cells = list(dict.fromkeys([c.text.strip() for c in row.cells if c.text.strip()]))
-            if cells:
-                rows.append(cells)
+            cells = [c.text.strip() for c in row.cells]
+            text = " ".join(dict.fromkeys(c for c in cells if c))
+            if text:
+                rows.append(text)
+
         if not rows:
             continue
-        for r in rows:
-            if len(r) >= 5:
-                add_q(r[0], r[1:5], r[1])
-            elif len(r) >= 3:
-                add_q(r[0], r[1:] + ["Variant C", "Variant D"], r[1])
+
+        # FORMAT A: bitta jadval = bitta savol
+        #   1-qator: savol, 2-5-qator: variantlar (2-qator = to'g'ri javob)
+        if len(rows) == 5:
+            add_q(rows[0], rows[1:5], rows[1])
+        elif len(rows) == 4:
+            add_q(rows[0], rows[1:4] + ["Variant D"], rows[1])
+        # FORMAT B: bitta jadval ko'p ustunli — har bir qator alohida savol
+        elif len(rows) > 5:
+            for row in table.rows:
+                cells = list(dict.fromkeys([c.text.strip() for c in row.cells if c.text.strip()]))
+                if len(cells) >= 5:
+                    add_q(cells[0], cells[1:5], cells[1])
+                elif len(cells) == 3:
+                    add_q(cells[0], cells[1:] + ["Variant C", "Variant D"], cells[1])
 
     if not questions:
         lines = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
@@ -366,6 +379,39 @@ def parse_pdf(path: str) -> list:
         return []
     except Exception:
         return []
+
+
+def convert_doc_to_docx(doc_path: str, docx_path: str) -> str:
+    """Eski .doc faylni .docx ga aylantiradi (LibreOffice orqali). Sinxron, executor ichida chaqiriladi."""
+    import shutil
+    import subprocess
+
+    soffice = (
+        shutil.which("soffice")
+        or shutil.which("libreoffice")
+        or shutil.which("soffice.bin")
+    )
+    if not soffice:
+        raise RuntimeError("LibreOffice serverda topilmadi")
+
+    out_dir = os.path.dirname(docx_path) or "."
+    try:
+        result = subprocess.run(
+            [soffice, "--headless", "--norestore", "--convert-to", "docx", "--outdir", out_dir, doc_path],
+            capture_output=True,
+            timeout=90,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Konversiya vaqti tugadi (90s)")
+
+    auto_out = os.path.join(out_dir, os.path.splitext(os.path.basename(doc_path))[0] + ".docx")
+    if not os.path.exists(auto_out):
+        err = result.stderr.decode(errors="ignore")[:200] if result.stderr else "noma'lum xato"
+        raise RuntimeError(f"Konversiya muvaffaqiyatsiz: {err}")
+
+    if auto_out != docx_path:
+        os.rename(auto_out, docx_path)
+    return docx_path
 
 
 # ─────────────────────────── FSM ─────────────────────────────────
@@ -427,7 +473,7 @@ def poll_kb():
 
 async def serve_webapp(request):
     try:
-        with open("index.html", "r", encoding="utf-8") as f:
+        with open("webapp/index.html", "r", encoding="utf-8") as f:
             return web.Response(text=f.read(), content_type="text/html")
     except FileNotFoundError:
         return web.Response(text="Web App topilmadi", status=404)
@@ -438,10 +484,64 @@ async def health(request):
         content_type="application/json",
     )
 
+
+def _cors_headers():
+    return {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+    }
+
+
+async def api_files(request):
+    """Foydalanuvchi botga yuklagan fayllar ro'yxati (savollar bilan)."""
+    uid = request.match_info.get("uid")
+    user_data = users.get(str(uid), {})
+    docs = user_data.get("uploaded_docs", [])
+
+    # Faqat kerakli maydonlarni qaytaramiz, file_path kerak emas
+    out = []
+    for d in docs:
+        out.append({
+            "file_name": d.get("file_name"),
+            "uploaded_at": d.get("uploaded_at"),
+            "questions": d.get("questions", []),
+        })
+
+    return web.Response(
+        text=json.dumps({"files": out}, ensure_ascii=False),
+        content_type="application/json",
+        headers=_cors_headers(),
+    )
+
+
+async def api_results(request):
+    """Foydalanuvchining bot orqali ishlangan test natijalari."""
+    uid = request.match_info.get("uid")
+    user_data = users.get(str(uid), {})
+    results = user_data.get("results", [])
+
+    return web.Response(
+        text=json.dumps({"results": results}, ensure_ascii=False, default=str),
+        content_type="application/json",
+        headers=_cors_headers(),
+    )
+
+
+async def api_options(request):
+    return web.Response(headers=_cors_headers())
+
+
 async def start_web():
     app = web.Application()
-    app.router.add_get("/", serve_webapp)
+    app.router.add_get("/", health)
     app.router.add_get("/health", health)
+    app.router.add_get("/webapp", serve_webapp)
+    app.router.add_get("/webapp/", serve_webapp)
+    app.router.add_get("/api/files/{uid}", api_files)
+    app.router.add_get("/api/results/{uid}", api_results)
+    app.router.add_route("OPTIONS", "/api/files/{uid}", api_options)
+    app.router.add_route("OPTIONS", "/api/results/{uid}", api_options)
 
     runner = web.AppRunner(app)
     await runner.setup()
@@ -567,20 +667,24 @@ async def handle_doc(message: Message, state: FSMContext):
 
         parse_ext = ext
         if ext == ".doc":
-            import shutil, subprocess
             converted = save_path.replace(".doc", "_conv.docx")
-            soffice = shutil.which("soffice") or shutil.which("libreoffice")
-            if soffice:
-                subprocess.run([soffice, "--headless", "--convert-to", "docx",
-                                 "--outdir", "temp", save_path],
-                                check=True, capture_output=True, timeout=60)
-                auto = os.path.join("temp", os.path.splitext(os.path.basename(save_path))[0] + ".docx")
-                if os.path.exists(auto):
-                    os.rename(auto, converted)
+            try:
+                await asyncio.get_event_loop().run_in_executor(
+                    None, convert_doc_to_docx, save_path, converted
+                )
                 save_path = converted
                 parse_ext = ".docx"
-            else:
-                raise RuntimeError("LibreOffice topilmadi. .doc o'rniga .docx yuboring.")
+            except RuntimeError as e:
+                await clean_chat(uid, message.chat.id)
+                msg = await message.answer(
+                    f"❌ <b>.doc faylni o'qib bo'lmadi</b>\n\n"
+                    f"<code>{str(e)[:200]}</code>\n\n"
+                    f"💡 Iltimos, faylni <b>.docx</b> formatga saqlab qaytadan yuboring.",
+                    parse_mode="HTML",
+                    reply_markup=main_kb(),
+                )
+                await track(uid, msg.message_id)
+                return
 
         parsers = {".txt": parse_txt, ".docx": parse_docx, ".xlsx": parse_xlsx, ".pdf": parse_pdf}
         questions = parsers.get(parse_ext, lambda p: [])(save_path)
