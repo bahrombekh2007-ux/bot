@@ -533,18 +533,27 @@ async def api_options(request):
 
 
 async def start_web():
+    app = web.Application()
+
     app.router.add_get("/", serve_webapp)
     app.router.add_get("/health", health)
+
     app.router.add_get("/webapp", serve_webapp)
     app.router.add_get("/webapp/", serve_webapp)
+
     app.router.add_get("/api/files/{uid}", api_files)
     app.router.add_get("/api/results/{uid}", api_results)
+
     app.router.add_route("OPTIONS", "/api/files/{uid}", api_options)
     app.router.add_route("OPTIONS", "/api/results/{uid}", api_options)
+
     runner = web.AppRunner(app)
     await runner.setup()
+
     port = int(os.environ.get("PORT", 10000))
-    await web.TCPSite(runner, "0.0.0.0", port).start()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
     print(f"🌐 Web server: port {port}")
 
 
